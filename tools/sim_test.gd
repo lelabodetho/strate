@@ -455,6 +455,7 @@ func test_pack_aggro() -> void:
 	var b_delay := b.aggro_delay
 	check(a.state == &"chase" and b.state == &"idle" and b_delay > 0.0, "a wakes and arms its neighbour at 3 with a delay (%.2f s)" % b_delay)
 	check(c.aggro_delay == 0.0 and c.state == &"idle", "the grunt at 5 is not armed")
+	check(b.provoked_t == 0.0, "a natural wake passes no provocation")
 	var aggro := _events_of(w, "aggro", 0.35, cmd())
 	check(b.state == &"chase" and aggro.size() == 1 and aggro[0].id == b.id, "the neighbour at 3 follows within 0.3 s")
 	check(c.state == &"idle", "the grunt at 5 stays idle")
@@ -538,16 +539,13 @@ func test_provoke() -> void:
 	w.tuning.grunt_aggro = 14.0
 	w.spawn(&"player", Vector2(0, 9))
 	var hit := _idle_grunt(w, Vector2(0, -17))      # 26 from the player
-	var quiet := _idle_grunt(w, Vector2(-3, -17))   # 3 from it: woken by the hit, never hit itself, 26.2 from the player
+	var mate := _idle_grunt(w, Vector2(-3, -17))    # 3 from it: woken by the hit, never hit itself, 26.2 from the player
 	w.damage(hit.id, 1.0)
 	check(hit.state == &"chase" and is_equal_approx(hit.provoked_t, w.tuning.provoke_time), "the hit wakes and provokes the grunt")
+	check(mate.aggro_delay > 0.0 and is_equal_approx(mate.provoked_t, w.tuning.provoke_time), "the woken packmate inherits the provocation")
 	var de := _events_of(w, "deaggro", 1.0, cmd())
 	check(hit.state == &"chase" and hit.pos.y > -16.0, "provoked at 26: keeps chasing (z=%.1f)" % hit.pos.y)
-	var quiet_let_go := false
-	for ev in de:
-		if ev.id == quiet.id:
-			quiet_let_go = true
-	check(quiet_let_go and quiet.state != &"chase", "the unprovoked packmate lets go")
+	check(de.is_empty() and mate.state == &"chase" and mate.provoked_t > 2.5, "the packmate chases past the leash too (%.1f s left)" % mate.provoked_t)
 	# Re-armed on every hit: a second hit at 3.5 s pushes the window past 4 s.
 	run(w, 2.5, cmd())
 	w.damage(hit.id, 1.0)

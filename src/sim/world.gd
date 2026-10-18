@@ -359,7 +359,8 @@ func _step_projectiles(dt: float) -> void:
 		projectiles.erase(id)
 
 ## Idle or returning grunt starts chasing, and wakes idle packmates within aggro_share_radius
-## after a seeded delay so the pack does not move as one block.
+## after a seeded delay so the pack does not move as one block. A provoked grunt passes its
+## provocation on, so a pack woken by a sniped member chases past the leash together.
 func _wake(g: SimEntity) -> void:
 	if not g.alive or (g.state != &"idle" and g.state != &"return"):
 		return
@@ -375,6 +376,7 @@ func _wake(g: SimEntity) -> void:
 			continue
 		if o.pos.distance_to(g.pos) <= tuning.aggro_share_radius:
 			o.aggro_delay = maxf(0.001, rng.randf_range(0.0, AGGRO_DELAY_MAX))
+			o.provoked_t = maxf(o.provoked_t, g.provoked_t)
 
 func _step_grunt(dt: float, g: SimEntity, p: SimEntity) -> void:
 	g.attack_cd = maxf(0.0, g.attack_cd - dt)
