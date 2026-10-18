@@ -94,6 +94,10 @@ func _on_event(ev: Dictionary, world: SimWorld) -> void:
 				v.flash(EntityView.DODGE_FLASH, EntityView.DODGE_FLASH_TIME)
 		"impact":
 			_spawn_impact(ev.pos)
+		"aggro":
+			var v: EntityView = _views.get(ev.id)
+			if v != null:
+				v.flash(EntityView.AGGRO_FLASH, EntityView.AGGRO_FLASH_TIME)
 		"swing":
 			_spawn_swing(ev.pos, ev.dir, world.weapon)
 		"explosion":

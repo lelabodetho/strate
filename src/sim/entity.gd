@@ -14,9 +14,12 @@ var hp_max: float = 100.0
 var alive: bool = true
 
 # AI / combat state (grunts). Player uses the world-level dash fields.
-var state: StringName = &"idle"   # &"idle" | &"chase" | &"windup" | &"recover" | &"dead"
+var state: StringName = &"idle"   # &"idle" | &"chase" | &"windup" | &"recover" | &"return" | &"dead"
 var state_t: float = 0.0          # seconds left in the current timed state
 var attack_cd: float = 0.0
+var spawn_pos: Vector2 = Vector2.ZERO
+var aggro_delay: float = 0.0      # > 0: woken by a packmate, will chase when it hits 0
+var pack: int = -1                # wave pack index, -1 for hand-placed grunts
 
 func _init(p_id: int, p_kind: StringName, p_pos: Vector2) -> void:
 	id = p_id
@@ -29,5 +32,5 @@ func to_dict() -> Dictionary:
 		"pos": [snappedf(pos.x, 0.01), snappedf(pos.y, 0.01)],
 		"facing": [snappedf(facing.x, 0.01), snappedf(facing.y, 0.01)],
 		"radius": radius, "hit_radius": hit_radius,
-		"hp": hp, "alive": alive, "state": String(state),
+		"hp": hp, "alive": alive, "state": String(state), "pack": pack,
 	}

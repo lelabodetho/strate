@@ -9,6 +9,14 @@ const WAVE_STEP := 2
 const WAVE_CAP := 12
 const WAVE_DELAY := 2.0        # seconds between the last kill and the next wave
 const SPAWN_MIN_DIST := 8.0    # grunts never appear closer than this to the player
+const PACK_RADIUS := 2.0       # wave grunts spawn within this distance of their pack center
+const PACK_MIN := 2
+const PACK_MAX := 4
+const PACKS_MIN := 2
+const PACKS_MAX := 4
+const AGGRO_DELAY_MAX := 0.3   # seeded delay before a woken packmate starts chasing
+const RETURN_SPEED_MULT := 0.6 # walking-home speed, as a fraction of grunt_speed
+const HOME_EPSILON := 0.2
 
 var seed: int
 var level: SimLevel
@@ -26,11 +34,13 @@ var swing_t: float = 0.0        # > 0 while the brute's swing (and lunge) plays
 var swing_dir: Vector2 = Vector2.DOWN
 var wave: int = 0
 var next_wave_t: float = 0.0   # > 0 while counting down to the next wave
+var wave_packs: Array[Vector2] = []   # pack centers of the current wave
 
 # What happened during the last step(), for the view and the harness. Cleared every step.
 # {type:"hit", target, pos, dir, damage} {type:"kill", target, pos} {type:"dodge", pos}
 # {type:"shot", pos, dir} {type:"impact", pos} {type:"wave_cleared", wave}
 # {type:"swing", pos, dir} {type:"explosion", pos, radius} {type:"stagger", target}
+# {type:"aggro", id} {type:"deaggro", id}
 var events: Array[Dictionary] = []
 
 # Dash state (player only for now)
@@ -53,25 +63,43 @@ func begin() -> void:
 	spawn(&"player", level.player_spawn)
 	start_wave(1)
 
-## Wave n: clear remaining grunts, spawn min(cap, 3 + 2*(n-1)) of them at seeded positions,
-## spread over the level's floors, never within SPAWN_MIN_DIST of the player.
+## Wave n: clear remaining grunts, spawn min(cap, 3 + 2*(n-1)) of them as 2–4 packs of 2–4,
+## each pack within PACK_RADIUS of a seeded center on one of the level's floors, never within
+## SPAWN_MIN_DIST of the player. Small waves get fewer or smaller packs so the total holds.
 func start_wave(n: int) -> void:
 	wave = n
 	stats.wave = n
 	next_wave_t = 0.0
+	wave_packs.clear()
 	for id in entities.keys():
 		if entities[id].kind == &"grunt":
 			entities.erase(id)
 	var p := player()
 	var count := mini(WAVE_CAP, WAVE_BASE + WAVE_STEP * (n - 1))
+	var sizes := _pack_sizes(count)
 	var placed: Array[Vector2] = []
-	for i in count:
-		var area: Rect2 = level.floors[i % level.floors.size()]
-		var pos := _find_spawn(area, p, placed)
-		spawn(&"grunt", pos)
-		placed.append(pos)
+	for pack_i in sizes.size():
+		var area: Rect2 = level.floors[pack_i % level.floors.size()]
+		var center := _find_spawn(area, p, placed, SPAWN_MIN_DIST + PACK_RADIUS)
+		wave_packs.append(center)
+		for j in sizes[pack_i]:
+			var pos := _find_pack_slot(center, p, placed)
+			var g := spawn(&"grunt", pos)
+			g.pack = pack_i
+			placed.append(pos)
 
-func _find_spawn(area: Rect2, p: SimEntity, placed: Array[Vector2]) -> Vector2:
+## Split `count` into packs of PACK_MIN..PACK_MAX, PACKS_MIN..PACKS_MAX of them when the
+## count allows it; otherwise as close as possible (3 grunts = one pack of 3).
+func _pack_sizes(count: int) -> Array[int]:
+	var lo := maxi(1, ceili(float(count) / PACK_MAX))
+	var hi := maxi(lo, mini(PACKS_MAX, int(count / PACK_MIN)))
+	var packs := rng.randi_range(maxi(lo, mini(PACKS_MIN, hi)), hi)
+	var sizes: Array[int] = []
+	for i in packs:
+		sizes.append(int(count / packs) + (1 if i < count % packs else 0))
+	return sizes
+
+func _find_spawn(area: Rect2, p: SimEntity, placed: Array[Vector2], min_dist: float) -> Vector2:
 	var r := tuning.grunt_radius + 0.1
 	var best := Vector2.INF
 	var best_d := -1.0
@@ -88,12 +116,34 @@ func _find_spawn(area: Rect2, p: SimEntity, placed: Array[Vector2]) -> Vector2:
 				break
 		if crowded:
 			continue
-		if d_player > SPAWN_MIN_DIST:
+		if d_player > min_dist:
 			return pos
 		if d_player > best_d:
 			best_d = d_player
 			best = pos
 	return best if best != Vector2.INF else area.get_center()
+
+## A free spot within PACK_RADIUS of the pack center, still clear of the player.
+func _find_pack_slot(center: Vector2, p: SimEntity, placed: Array[Vector2]) -> Vector2:
+	var r := tuning.grunt_radius + 0.1
+	var fallback := center
+	for attempt in 48:
+		var a := rng.randf_range(0.0, TAU)
+		var d := sqrt(rng.randf()) * PACK_RADIUS
+		var pos := center + Vector2(cos(a), sin(a)) * d
+		if not level.circle_fits(pos, r):
+			continue
+		if p != null and pos.distance_to(p.pos) <= SPAWN_MIN_DIST:
+			continue
+		var crowded := false
+		for q in placed:
+			if q.distance_to(pos) < r * 2.2:
+				crowded = true
+				break
+		if not crowded:
+			return pos
+		fallback = pos
+	return fallback
 
 ## Same wave again: player back to full health at the spawn point, fresh grunts and bullets.
 ## Tuning is untouched.
@@ -135,6 +185,7 @@ func spawn(kind: StringName, pos: Vector2) -> SimEntity:
 			e.radius = tuning.grunt_radius
 			e.hit_radius = tuning.grunt_hit_radius
 	e.hp = e.hp_max
+	e.spawn_pos = pos
 	entities[e.id] = e
 	return e
 
@@ -307,6 +358,24 @@ func _step_projectiles(dt: float) -> void:
 	for id in dead:
 		projectiles.erase(id)
 
+## Idle or returning grunt starts chasing, and wakes idle packmates within aggro_share_radius
+## after a seeded delay so the pack does not move as one block.
+func _wake(g: SimEntity) -> void:
+	if not g.alive or (g.state != &"idle" and g.state != &"return"):
+		return
+	g.aggro_delay = 0.0
+	g.state = &"chase"
+	_emit({"type": "aggro", "id": g.id})
+	if tuning.aggro_share_radius <= 0.0:
+		return
+	for o in entities.values():
+		if o == g or not o.alive or o.kind != &"grunt" or o.aggro_delay > 0.0:
+			continue
+		if o.state != &"idle" and o.state != &"return":
+			continue
+		if o.pos.distance_to(g.pos) <= tuning.aggro_share_radius:
+			o.aggro_delay = maxf(0.001, rng.randf_range(0.0, AGGRO_DELAY_MAX))
+
 func _step_grunt(dt: float, g: SimEntity, p: SimEntity) -> void:
 	g.attack_cd = maxf(0.0, g.attack_cd - dt)
 	g.vel = Vector2.ZERO
@@ -314,13 +383,32 @@ func _step_grunt(dt: float, g: SimEntity, p: SimEntity) -> void:
 	var dist := to_p.length()
 	var contact := g.radius + p.radius + tuning.grunt_reach
 
+	if g.aggro_delay > 0.0:
+		g.aggro_delay -= dt
+		if g.aggro_delay <= 0.0:
+			g.aggro_delay = 0.0
+			_wake(g)
+
 	match g.state:
 		&"idle":
 			if p.alive and dist <= tuning.grunt_aggro:
-				g.state = &"chase"
+				_wake(g)
+		&"return":
+			if p.alive and dist <= tuning.grunt_aggro:
+				_wake(g)
+			else:
+				var home := g.spawn_pos - g.pos
+				if home.length() <= HOME_EPSILON:
+					g.state = &"idle"
+				else:
+					g.vel = home.normalized() * tuning.grunt_speed * RETURN_SPEED_MULT
 		&"chase":
 			if not p.alive:
 				g.state = &"idle"
+			elif dist > tuning.grunt_aggro * tuning.aggro_drop_mult:
+				# Leash: too far, give up and walk home.
+				g.state = &"return"
+				_emit({"type": "deaggro", "id": g.id})
 			elif dist <= contact and g.attack_cd <= 0.0:
 				g.state = &"windup"
 				g.state_t = tuning.grunt_windup
@@ -339,7 +427,9 @@ func _step_grunt(dt: float, g: SimEntity, p: SimEntity) -> void:
 			if g.state_t <= 0.0:
 				g.state = &"chase"
 
-	if dist > 0.05:
+	if g.state == &"return" and g.vel != Vector2.ZERO:
+		g.facing = g.vel.normalized()
+	elif dist > 0.05:
 		g.facing = to_p / dist
 	if g.vel != Vector2.ZERO:
 		g.pos = level.resolve_circle(g.pos + g.vel * dt, g.radius)
@@ -382,6 +472,9 @@ func damage(id: int, amount: float, dir: Vector2 = Vector2.ZERO, kb_mult: float 
 		e.state_t = tuning.grunt_recover
 		e.attack_cd = tuning.grunt_recover
 		_emit({"type": "stagger", "target": e.id})
+	elif e.kind == &"grunt" and (e.state == &"idle" or e.state == &"return"):
+		# Shooting a sleeping pack wakes the whole pack.
+		_wake(e)
 	if dir != Vector2.ZERO:
 		e.pos = level.resolve_circle(e.pos + dir * tuning.knockback * kb_mult, e.radius)
 	_emit({"type": "hit", "target": e.id, "pos": e.pos, "dir": dir, "damage": amount})
@@ -426,6 +519,7 @@ func to_dict() -> Dictionary:
 		"seed": seed, "tick": tick, "time": snappedf(time, 0.001),
 		"player_id": player_id, "dashing": is_dashing(), "invulnerable": is_invulnerable(),
 		"wave": wave, "grunts_alive": grunts_alive(), "next_wave_in": snappedf(next_wave_t, 0.01),
+		"wave_packs": wave_packs.map(func(c: Vector2): return [snappedf(c.x, 0.01), snappedf(c.y, 0.01)]),
 		"weapon": weapon.name,
 		"stats": stats,
 		"tuning": tuning.to_dict(),

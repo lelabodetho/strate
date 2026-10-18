@@ -24,6 +24,10 @@ func _init() -> void:
 	test_stagger()
 	test_body_stats()
 	test_attack_move()
+	test_pack_aggro()
+	test_hit_wakes_pack()
+	test_leash()
+	test_wave_packs()
 	print("[sim_test] ", "OK" if failures == 0 else "FAILED (%d)" % failures)
 	quit(1 if failures > 0 else 0)
 
@@ -426,3 +430,103 @@ func test_attack_move() -> void:
 	run(w, 0.3, cmd(Vector2(0, -1), Vector2(0, -20), true))
 	check(absf(-p.pos.y - 0.3 * w.tuning.player_speed) < 0.01, "technomancer keeps full speed while firing")
 	check(SimTuning.keys().has("attack_move_mult") and SimTuning.new().attack_move_mult == 1.0, "attack_move_mult is a tuning key, default 1.0")
+
+func _idle_grunt(w: SimWorld, pos: Vector2) -> SimEntity:
+	return w.spawn(&"grunt", pos)
+
+func _events_of(w: SimWorld, type: String, seconds: float, c: Command) -> Array:
+	var out := []
+	for i in int(round(seconds / DT)):
+		w.step(DT, c)
+		for ev in w.events:
+			if ev.type == type:
+				out.append(ev)
+	return out
+
+func test_pack_aggro() -> void:
+	var w := SimWorld.new(5)
+	w.tuning.grunt_aggro = 6.0
+	w.spawn(&"player", Vector2(0, 9))
+	var a := _idle_grunt(w, Vector2(0, 4))         # 5 from the player: wakes on its own
+	var b := _idle_grunt(w, Vector2(0, 1))         # 3 from a, 8 from the player
+	var c := _idle_grunt(w, Vector2(-4.9, 3))      # 5 from a, 5.3 from b, 7.7 from the player
+	w.step(DT, cmd())
+	var b_delay := b.aggro_delay
+	check(a.state == &"chase" and b.state == &"idle" and b_delay > 0.0, "a wakes and arms its neighbour at 3 with a delay (%.2f s)" % b_delay)
+	check(c.aggro_delay == 0.0 and c.state == &"idle", "the grunt at 5 is not armed")
+	var aggro := _events_of(w, "aggro", 0.35, cmd())
+	check(b.state == &"chase" and aggro.size() == 1 and aggro[0].id == b.id, "the neighbour at 3 follows within 0.3 s")
+	check(c.state == &"idle", "the grunt at 5 stays idle")
+	# Delay is seeded: same seed, same delay.
+	var w2 := SimWorld.new(5)
+	w2.tuning.grunt_aggro = 6.0
+	w2.spawn(&"player", Vector2(0, 9))
+	_idle_grunt(w2, Vector2(0, 4))
+	var b2 := _idle_grunt(w2, Vector2(0, 1))
+	_idle_grunt(w2, Vector2(-4.9, 3))
+	w2.step(DT, cmd())
+	check(is_equal_approx(b2.aggro_delay, b_delay), "wake delay is seeded (%.3f)" % b2.aggro_delay)
+
+func test_hit_wakes_pack() -> void:
+	var w := SimWorld.new(1)
+	w.tuning.grunt_aggro = 10.0   # leash at 18: the pack at 15 chases once woken
+	w.spawn(&"player", Vector2(0, 9))
+	var a := _idle_grunt(w, Vector2(0, -6))        # 15 from the player
+	var b := _idle_grunt(w, Vector2(2, -7))
+	var c := _idle_grunt(w, Vector2(-2, -8))
+	var far := _idle_grunt(w, Vector2(0, -20))     # 14 from a
+	run(w, 0.5, cmd())
+	check(a.state == &"idle" and b.state == &"idle", "a sleeping pack out of range stays idle")
+	w.damage(a.id, 1.0)
+	var woke_a := false
+	for ev in w.events:
+		if ev.type == "aggro" and ev.id == a.id:
+			woke_a = true
+	check(woke_a and a.state == &"chase", "the hit grunt wakes at once")
+	run(w, 0.35, cmd())
+	check(b.state == &"chase" and c.state == &"chase", "its packmates follow")
+	check(far.state == &"idle" and far.aggro_delay == 0.0, "a grunt outside the share radius sleeps on")
+
+func test_leash() -> void:
+	var w := SimWorld.new(1)
+	w.tuning.grunt_aggro = 6.0
+	var p := w.spawn(&"player", Vector2(0, 9))
+	var g := _idle_grunt(w, Vector2(0, 4))
+	run(w, 0.3, cmd())
+	check(g.state == &"chase" and g.pos.y > 4.0, "grunt chases")
+	p.pos = Vector2(0, -20)   # 24+ away: beyond 6 * 1.8
+	var de := _events_of(w, "deaggro", DT, cmd())
+	check(g.state == &"return" and de.size() == 1 and de[0].id == g.id, "too far: deaggro, walks home")
+	var z_before := g.pos.y
+	run(w, 0.2, cmd())
+	check(absf((z_before - g.pos.y) - 0.2 * w.tuning.grunt_speed * 0.6) < 0.02, "walks home at 0.6x speed (%.2f)" % (z_before - g.pos.y))
+	run(w, 3.0, cmd())
+	check(g.state == &"idle" and g.pos.distance_to(g.spawn_pos) <= 0.2, "back at its spawn, idle (d=%.2f)" % g.pos.distance_to(g.spawn_pos))
+	p.pos = Vector2(0, 8)
+	w.step(DT, cmd())
+	check(g.state == &"chase", "re-aggro when the player comes back in range")
+
+func test_wave_packs() -> void:
+	var w := SimWorld.new(9)
+	w.begin()
+	check(w.wave_packs.size() == 1 and _grunt_positions(w).size() == 3, "3 grunts = one pack of 3")
+	for n in [2, 3, 4, 5, 6, 30]:
+		w.start_wave(n)
+		var grunts := []
+		for e in w.entities.values():
+			if e.kind == &"grunt":
+				grunts.append(e)
+		var expected := mini(12, 3 + 2 * (n - 1))
+		var sizes := {}
+		var in_radius := true
+		var far := true
+		for g in grunts:
+			sizes[g.pack] = sizes.get(g.pack, 0) + 1
+			in_radius = in_radius and g.pos.distance_to(w.wave_packs[g.pack]) <= SimWorld.PACK_RADIUS + 0.01
+			far = far and g.pos.distance_to(w.player().pos) > SimWorld.SPAWN_MIN_DIST
+		var packs := w.wave_packs.size()
+		var sizes_ok := true
+		for k in sizes:
+			sizes_ok = sizes_ok and sizes[k] >= 2 and sizes[k] <= 4
+		check(grunts.size() == expected and packs >= 2 and packs <= 4 and sizes_ok and in_radius and far,
+			"wave %d: %d grunts in %d packs of %s, all within %.0f of their center and > %.0f from the player" % [n, grunts.size(), packs, sizes.values(), SimWorld.PACK_RADIUS, SimWorld.SPAWN_MIN_DIST])

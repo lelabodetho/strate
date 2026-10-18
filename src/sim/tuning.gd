@@ -30,6 +30,8 @@ const SPECS := [
 	["grunt_windup", 0.05, 2.0, 0.01],
 	["grunt_recover", 0.0, 3.0, 0.05],
 	["grunt_aggro", 1.0, 40.0, 1.0],
+	["aggro_share_radius", 0.0, 10.0, 0.5],
+	["aggro_drop_mult", 1.0, 4.0, 0.1],
 ]
 
 # Player
@@ -62,6 +64,8 @@ var grunt_hit_slack := 0.5    # extra distance tolerated when the hit lands (let
 var grunt_windup := 0.4
 var grunt_recover := 0.7
 var grunt_aggro := 30.0
+var aggro_share_radius := 4.0  # a waking grunt wakes idle grunts within this distance
+var aggro_drop_mult := 1.8     # a chasing grunt farther than grunt_aggro * this gives up and walks home
 
 static func keys() -> PackedStringArray:
 	var out := PackedStringArray()
