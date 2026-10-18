@@ -14,6 +14,9 @@ Un aventurier dans une cité verticale (STRATE) bâtie dans une arche échouée.
 3. Le monde persiste.
 4. La difficulté est un choix, jamais un mur. Densité pour le trash, mécanique pour élites et boss.
 
+## Feel — règle de base
+Starter ARPG, pas roguelike : à nu le joueur est faible mais chaque coup est satisfaisant. Cadence lente, coup lourd, projectile visible, déplacement ralenti pendant l'attaque, mono-cible. Tout ce qui rend nerveux s'acquiert par le build. Ne jamais régler le starter comme un twin-stick.
+
 ## Contrôles
 ZQSD (physical WASD) + visée souris. Dash avec i-frames. Tir par défaut ; mêlée = une classe.
 
@@ -38,8 +41,9 @@ Ces règles préparent la coop 1–4 (jalon 5) sans la coder maintenant.
 3D low-poly + shader de post-process (dither / pixel). Le filtre final se décide sur `scenes/test/render_test.tscn`. Palette : gris acier, rouille, noir, un accent. Pas de textures au départ : couleurs plates.
 
 ## Jalons
-- J1 : squelette + harnais (en cours)
-- J2 : la mécanique — tirer + esquiver dans un couloir avec 3 ennemis. Critère : envie d'y rejouer.
+- J1 : squelette + harnais — bouclé
+- J2 : la mécanique — bouclé. Base = preset A densité (tools/presets/baseline.json), hunter = archétype de départ.
+- J2b : scène de test de rendu (3 filtres commutables), murs translucides propres, déploiement web
 - J3 : viewer de personnage (8 directions, sliders, export PNG, JSON)
 - J4 : contenu (élites, affixes, paliers, boss, éditeur de zone)
 - J5 : coop 1–4

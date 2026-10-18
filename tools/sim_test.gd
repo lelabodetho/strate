@@ -23,6 +23,7 @@ func _init() -> void:
 	test_weapon_switch_keeps_tuning()
 	test_stagger()
 	test_body_stats()
+	test_attack_move()
 	print("[sim_test] ", "OK" if failures == 0 else "FAILED (%d)" % failures)
 	quit(1 if failures > 0 else 0)
 
@@ -299,19 +300,20 @@ func test_technomancer_blast() -> void:
 	w.spawn(&"player", Vector2(0, 9))
 	w.set_weapon("technomancer")
 	# Shot flies 8 u/s for 1.5 s from z=8.4 and bursts at z=-3.6.
-	var inside := _still_grunt(w, Vector2(1.9, -3.6))
-	var outside := _still_grunt(w, Vector2(-2.1, -3.6))
+	var inside := _still_grunt(w, Vector2(1.3, -3.6))
+	var outside := _still_grunt(w, Vector2(-1.5, -3.6))
 	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), true))
-	check(w.projectiles.size() == 1 and w.projectiles.values()[0].blast_radius == 2.0, "technomancer fires a blast projectile")
+	check(w.projectiles.size() == 1 and is_equal_approx(w.projectiles.values()[0].blast_radius, 1.4), "technomancer fires a blast projectile (radius 1.4)")
 	var explosions := []
 	for i in 100:
 		w.step(DT, cmd())
 		for ev in w.events:
 			if ev.type == "explosion":
 				explosions.append(ev)
-	check(explosions.size() == 1 and explosions[0].radius == 2.0, "one explosion at end of life (%d)" % explosions.size())
-	check(inside.hp < inside.hp_max, "explosion hits at 1.9 (hp=%.1f)" % inside.hp)
-	check(outside.hp == outside.hp_max, "explosion misses at 2.1")
+	check(explosions.size() == 1 and is_equal_approx(explosions[0].radius, 1.4), "one explosion at end of life (%d)" % explosions.size())
+	check(inside.hp < inside.hp_max, "explosion hits at 1.3 (hp=%.1f)" % inside.hp)
+	check(outside.hp == outside.hp_max, "explosion misses at 1.5")
+	check(is_equal_approx(w.tuning.fire_interval * w.weapon.fire_interval_mult, 0.8), "technomancer cadence is 0.8 s with the default tuning")
 	# Center damage: a grunt right under the burst takes 2x.
 	var w2 := SimWorld.new(1)
 	w2.spawn(&"player", Vector2(0, 9))
@@ -390,3 +392,37 @@ func test_body_stats() -> void:
 	w2.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), true))
 	check(not w2.is_invulnerable() and is_equal_approx(w2.projectiles.values()[0].vel.length(), w2.tuning.proj_speed * 0.4),
 		"technomancer: no i-frames, projectile at 0.4x speed (%.1f)" % w2.projectiles.values()[0].vel.length())
+
+func test_attack_move() -> void:
+	var w := SimWorld.new(1)
+	w.tuning.attack_move_mult = 0.55
+	var p := w.spawn(&"player", Vector2(0, 9))
+	# Hunter: shooting while walking up the corridor is 0.55x speed as long as fire_cd > 0
+	# (the trigger tick itself still moves at full speed: fire happens after movement).
+	var z0 := p.pos.y
+	run(w, 0.5, cmd(Vector2(0, -1), Vector2(0, -20), true))
+	var walked := z0 - p.pos.y
+	var expected := DT * w.tuning.player_speed + (0.5 - DT) * w.tuning.player_speed * 0.55
+	check(absf(walked - expected) < 0.01, "hunter walks at 0.55x while firing (%.2f)" % walked)
+	w.fire_cd = 0.0
+	z0 = p.pos.y
+	run(w, 0.2, cmd(Vector2(0, -1)))
+	check(absf((z0 - p.pos.y) - 0.2 * w.tuning.player_speed) < 0.01, "full speed again once fire_cd is spent")
+	# Brute: during the 9 swing ticks, lunge plus steering at 0.55x; after it, full speed even with fire_cd > 0.
+	w.set_weapon("brute")
+	p.pos = Vector2(0, 0)
+	w.step(DT, cmd(Vector2(-1, 0), Vector2(0, -20), true))   # trigger tick: full-speed step, then the swing starts
+	var x0 := p.pos.x
+	run(w, 0.15, cmd(Vector2(-1, 0)))
+	check(absf((x0 - p.pos.x) - 0.15 * w.tuning.player_speed * 0.55) < 0.01 and absf(p.pos.y + 0.8) < 0.01,
+		"brute swing: lunge 0.8 plus 0.55x steering (dx=%.3f z=%.2f)" % [x0 - p.pos.x, p.pos.y])
+	check(w.swing_t <= 0.0, "swing is over after 0.15 s")
+	x0 = p.pos.x
+	run(w, 0.2, cmd(Vector2(-1, 0)))
+	check(w.fire_cd > 0.0 and absf((x0 - p.pos.x) - 0.2 * w.tuning.player_speed) < 0.01, "brute moves at full speed between swings")
+	# Technomancer: unaffected.
+	w.set_weapon("technomancer")
+	p.pos = Vector2(0, 0)
+	run(w, 0.3, cmd(Vector2(0, -1), Vector2(0, -20), true))
+	check(absf(-p.pos.y - 0.3 * w.tuning.player_speed) < 0.01, "technomancer keeps full speed while firing")
+	check(SimTuning.keys().has("attack_move_mult") and SimTuning.new().attack_move_mult == 1.0, "attack_move_mult is a tuning key, default 1.0")

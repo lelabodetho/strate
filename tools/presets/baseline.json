@@ -1,4 +1,5 @@
 {
+  "attack_move_mult": 0.55,
   "dash_cooldown": 0.8,
   "dash_iframes": 0.25,
   "dash_speed": 22.0,

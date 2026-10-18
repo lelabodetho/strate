@@ -239,14 +239,29 @@ Conséquences :
 
 Critère de sortie : l'agent peut lancer le jeu, prendre une capture, lire l'état, sans toi.
 
-### Jalon 2 — La mécanique
+### Jalon 2 — La mécanique (bouclé le 18/10/2026)
 
-- [ ] Implémenter la mécanique unique, moche : tirer + esquiver dans un couloir avec 3 ennemis.
-- [ ] Jouer, noter ce qui ne va pas, corriger en langage naturel.
-- [ ] Un dial de tuning (vitesse, timing, feel) exposé dans une mini-UI.
-- [ ] `scenes/test/render_test.tscn` : même couloir, trois filtres commutables (pixel dense, dither bichrome, mélange). Ferme la case rendu du moodboard.
+- [x] Couloir 6×24 + salle 16×20 avec piliers, grunts (chase / windup / recover), tir, dash avec i-frames traversant, knockback, stagger.
+- [x] Events de sim consommés par le view (hit, kill, dodge, impact, swing, explosion, stagger, wave_cleared).
+- [x] Dial de tuning (Tab) : 24 sliders, presets dans `tools/presets/`, Save as, pause pendant le réglage.
+- [x] Arène de vagues : R relance la vague, N suivante, 0 retour, tuning conservé.
+- [x] Trois profils d'arme (1/2/3) : hunter (tir), brute (cône + fente + i-frames + armure), technomancer (projectile lent explosif). Profils = multiplicateurs sur le tuning, sauf cadence et vitesse de projectile qui sont absolues par profil.
+- [x] Murs fantômes (segments entre caméra et joueur à 25 %).
+- [x] Mort du joueur, R pour recommencer.
 
-Critère de sortie : tu as envie d'y rejouer.
+**Ce que le jeu a appris (session de tuning du 18/10)**
+- Base retenue : preset **A densité** (`tools/presets/baseline.json`), `proj_speed` 16. Les packs tombent vite, la menace vient du nombre.
+- `grunt_aggro` 10–14 : le joueur choisit quand le combat commence. Pilier confirmé. À étendre en aggro de groupe + perte d'aggro (jalon 4).
+- **Hunter = archétype de départ**, confirmé en jeu. Technomancien fun. Brute injouable sans stagger / armure ; à réévaluer après ces ajouts, sinon elle attend le jalon 4.
+- Les projectiles partaient trop vite : voir la balle voyager donne du poids.
+- **Starter ARPG, pas roguelike (tranché le 18/10 au soir).** Le preset A avec cadence 0,12 et déplacement libre réglait un twin-stick (Isaac, Gungeon) : la puissance dans le joueur. Strate est un ARPG : la puissance est dans le build. Le starter est **faible mais satisfaisant** — cadence lente, coup lourd, projectile visible, déplacement ralenti pendant l'attaque (`attack_move_mult`), mono-cible. Tout ce qui rend nerveux (cadence, perforation, AoE large, vitesse) s'acquiert par items et compétences. Preset `E_starter_arpg` à valider ; dès validé, le **premier item de croissance** (+30 % cadence ou +1 perforation) passe en tête du jalon 4, avant les élites : c'est le vrai test du feel.
+- Règle de design : les multiplicateurs de profil s'appliquent aux stats de corps et de dégâts, jamais aux identités d'arme (cadence, vitesse de projectile).
+
+### Jalon 2b — Rendu
+
+- [ ] `scenes/test/render_test.tscn` : l'arène actuelle, trois filtres commutables (pixel dense, dither bichrome gris + accent, mélange). Ferme la case rendu du moodboard. Prérequis : captures de Signalis et Tithe que Tho aime.
+- [ ] Faces internes visibles sur les murs translucides : résolu par le post-process ou un mesh unique.
+- [ ] Déploiement web (push GitHub + Pages).
 
 ### Jalon 3 — Le viewer d'assets
 

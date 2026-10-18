@@ -13,6 +13,7 @@ var knockback_mult := 1.0
 var fire_interval_mult := 1.0
 var proj_speed_mult := 1.0
 var proj_radius_mult := 1.0
+var attack_move := true        # tuning.attack_move_mult applies while attacking
 
 # body: applied on tuning.player_hp and on every hit the player takes
 var hp_mult := 1.0
@@ -47,13 +48,15 @@ static func brute() -> WeaponProfile:
 	return w
 
 ## Slow, fat projectile that bursts on contact or at end of life: 2x damage at the center,
-## falling off toward a 2-unit edge, 0.6 s cadence.
+## falling off toward a 1.4-unit edge, 0.8 s cadence. Moves freely while firing.
 static func technomancer() -> WeaponProfile:
 	var w := WeaponProfile.new()
 	w.name = "technomancer"
 	w.kind = &"blast"
 	w.damage_mult = 2.0
-	w.fire_interval_mult = 0.6 / 0.15   # 0.6 s with the default 0.15 s
+	w.fire_interval_mult = 0.8 / 0.15   # 0.8 s with the default 0.15 s
+	w.blast_radius = 1.4
+	w.attack_move = false
 	w.proj_speed_mult = 8.0 / 20.0      # 8 with the default 20
 	w.proj_radius_mult = 0.35 / 0.25    # 0.35 with the default 0.25
 	w.hp_mult = 0.85

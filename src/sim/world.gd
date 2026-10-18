@@ -184,13 +184,22 @@ func _step_player(dt: float, p: SimEntity, cmd: Command) -> void:
 	if dash_t > 0.0:
 		dash_t -= dt
 		p.vel = dash_dir * tuning.dash_speed
-	elif swing_t > 0.0:
-		# Bounded so the lunge covers exactly `lunge` whatever the tick rounding.
+	elif swing_t > 1e-6:
+		# Bounded so the lunge covers exactly `lunge` whatever the tick rounding; the epsilon
+		# keeps float residue from adding a tenth tick.
+		# Steering during the swing is allowed at attack_move_mult speed, on top of the lunge.
 		var t := minf(dt, swing_t)
 		swing_t -= dt
+		if swing_t < 1e-6:
+			swing_t = 0.0
 		p.vel = swing_dir * (weapon.lunge / weapon.swing_time) * (t / dt)
+		if weapon.attack_move:
+			p.vel += cmd.move * tuning.player_speed * tuning.attack_move_mult
 	else:
-		p.vel = cmd.move * tuning.player_speed
+		var speed := tuning.player_speed
+		if weapon.attack_move and weapon.kind != &"cone" and fire_cd > 0.0:
+			speed *= tuning.attack_move_mult
+		p.vel = cmd.move * speed
 
 	p.pos = level.resolve_circle(p.pos + p.vel * dt, p.radius)
 

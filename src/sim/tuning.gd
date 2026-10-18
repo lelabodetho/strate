@@ -19,6 +19,7 @@ const SPECS := [
 	["proj_radius", 0.05, 1.0, 0.05],
 	["muzzle_offset", 0.0, 2.0, 0.05],
 	["knockback", 0.0, 3.0, 0.05],
+	["attack_move_mult", 0.1, 1.0, 0.05],
 	["grunt_hp", 5.0, 300.0, 5.0],
 	["grunt_speed", 0.5, 12.0, 0.1],
 	["grunt_damage", 0.0, 100.0, 1.0],
@@ -48,6 +49,7 @@ var proj_ttl := 1.5
 var proj_radius := 0.25
 var muzzle_offset := 0.6
 var knockback := 0.8          # displacement applied to whoever takes a hit, along the hit direction
+var attack_move_mult := 1.0   # move speed while attacking (hunter: fire_cd > 0, brute: during the swing)
 
 # Grunt: walks at the player, telegraphs, hits at contact, recovers.
 var grunt_hp := 30.0
