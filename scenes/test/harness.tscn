@@ -1,10 +1,11 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=9 format=3]
 
 [ext_resource type="Script" path="res://scenes/test/harness.gd" id="1"]
 [ext_resource type="Script" path="res://src/view/world_view.gd" id="2"]
 [ext_resource type="Script" path="res://src/input/player_input.gd" id="3"]
 [ext_resource type="Script" path="res://src/view/level_view.gd" id="4"]
 [ext_resource type="Script" path="res://src/ui/tuning_panel.gd" id="5"]
+[ext_resource type="Script" path="res://src/ui/hud.gd" id="6"]
 
 [sub_resource type="Environment" id="env"]
 background_mode = 1
@@ -45,3 +46,6 @@ script = ExtResource("3")
 
 [node name="TuningPanel" type="CanvasLayer" parent="."]
 script = ExtResource("5")
+
+[node name="Hud" type="CanvasLayer" parent="."]
+script = ExtResource("6")

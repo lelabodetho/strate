@@ -13,17 +13,25 @@ extends Node
 ##   --aim=x,z             world point under the cursor (default: straight down the corridor)
 ##   --hold=attack         hold the attack button
 ##   --dash=t1,t2,...      ticks on which dash is pressed
+##   --restart=<frame>     call restart() on that capture frame (tests the death -> R flow)
+##   --next=<frame>        call next_wave() on that capture frame
 
 const TUNING_PATH := "res://tools/out/tuning.json"
 
 var world: SimWorld
 var debug: bool = false
+var paused: bool = false   # set by the scene while the tuning panel is open; the sim does not step
 var _args: Dictionary = {}
 var _frames_left: int = -1
 var _scripted: bool = false
 var _dash_ticks: Array = []
 var _recent_events: Array = []   # capture mode: [{tick, events}] for the last RECENT_TICKS ticks
 const RECENT_TICKS := 120
+var _frame: int = 0
+var _restart_frame: int = -1
+var _next_frame: int = -1
+
+signal wave_cleared(wave: int)
 
 func _ready() -> void:
 	_args = _parse_args()
@@ -31,20 +39,32 @@ func _ready() -> void:
 	debug = _args.has("debug")
 	# Reference gameplay values live in tools/out/tuning.json; defaults otherwise.
 	world = SimWorld.new(seed, null, SimTuning.load_file(TUNING_PATH))
+	world.begin()
 	if _args.has("screenshot") or _args.has("state"):
 		_frames_left = int(_args.get("frames", "30"))
 		_scripted = true
 		for t in String(_args.get("dash", "")).split(",", false):
 			_dash_ticks.append(int(t))
+		_restart_frame = int(_args.get("restart", "-1"))
+		_next_frame = int(_args.get("next", "-1"))
 
 func step(dt: float, cmd: Command) -> void:
+	_frame += 1
 	if _scripted:
 		cmd = _scripted_command()
-	world.step(dt, cmd)
-	if _scripted and not world.events.is_empty():
-		_recent_events.append({"tick": world.tick, "events": world.to_dict()["events"]})
-		while _recent_events.size() > 0 and _recent_events[0].tick < world.tick - RECENT_TICKS:
-			_recent_events.pop_front()
+		if _frame == _restart_frame:
+			restart()
+		if _frame == _next_frame:
+			next_wave()
+	if not paused:
+		world.step(dt, cmd)
+		for ev in world.events:
+			if ev.type == "wave_cleared":
+				wave_cleared.emit(ev.wave)
+		if _scripted and not world.events.is_empty():
+			_recent_events.append({"tick": world.tick, "events": world.to_dict()["events"]})
+			while _recent_events.size() > 0 and _recent_events[0].tick < world.tick - RECENT_TICKS:
+				_recent_events.pop_front()
 	if _frames_left > 0:
 		_frames_left -= 1
 		if _frames_left == 0:
@@ -52,9 +72,27 @@ func step(dt: float, cmd: Command) -> void:
 
 func to_dict() -> Dictionary:
 	var d := world.to_dict()
+	d["paused"] = paused
 	if _scripted:
 		d["recent_events"] = _recent_events
+		d["restarts"] = restarts
 	return d
+
+var restarts: int = 0
+
+## R: same wave again, player at full health at the spawn. No scene reload, tuning untouched.
+func restart() -> void:
+	world.restart_wave()
+	restarts += 1
+
+## N: next wave right now, player state kept.
+func next_wave() -> void:
+	world.start_wave(world.wave + 1)
+
+## 0: back to wave 1 with a fresh player.
+func reset_waves() -> void:
+	world.wave = 1
+	world.restart_wave()
 
 func has_arg(key: String) -> bool:
 	return _args.has(key)

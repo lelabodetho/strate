@@ -47,6 +47,10 @@ func sync(world: SimWorld) -> void:
 			v.set_debug(debug, e)
 		v.sync(e, world.is_dashing() and e.id == world.player_id)
 	_debug_dirty = false
+	for id in _views.keys():
+		if not world.entities.has(id):
+			_views[id].queue_free()
+			_views.erase(id)
 
 	for b in world.projectiles.values():
 		var m: MeshInstance3D = _proj_views.get(b.id)

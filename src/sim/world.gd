@@ -3,8 +3,12 @@ extends RefCounted
 ## The whole game state and its update rule. Deterministic given (seed, commands, tuning).
 ## Rendering never touches this; input never bypasses step().
 
-const CORRIDOR_W := 6.0
-const CORRIDOR_L := 24.0
+# Waves
+const WAVE_BASE := 3
+const WAVE_STEP := 2
+const WAVE_CAP := 12
+const WAVE_DELAY := 2.0        # seconds between the last kill and the next wave
+const SPAWN_MIN_DIST := 8.0    # grunts never appear closer than this to the player
 
 var seed: int
 var level: SimLevel
@@ -17,10 +21,12 @@ var projectiles: Dictionary = {}  # id -> SimProjectile (removed when they die)
 var player_id: int = -1
 var _next_id: int = 1
 var fire_cd: float = 0.0
+var wave: int = 0
+var next_wave_t: float = 0.0   # > 0 while counting down to the next wave
 
 # What happened during the last step(), for the view and the harness. Cleared every step.
 # {type:"hit", target, pos, dir, damage} {type:"kill", target, pos} {type:"dodge", pos}
-# {type:"shot", pos, dir} {type:"impact", pos}
+# {type:"shot", pos, dir} {type:"impact", pos} {type:"wave_cleared", wave}
 var events: Array[Dictionary] = []
 
 # Dash state (player only for now)
@@ -30,13 +36,85 @@ var dash_dir: Vector2 = Vector2.ZERO
 var iframes_t: float = 0.0
 
 # Counters for the harness and tuning
-var stats := {"hits_taken": 0, "dodged": 0, "kills": 0, "shots": 0, "shots_hit": 0}
+var stats := {"wave": 0, "hits_taken": 0, "dodged": 0, "kills": 0, "shots": 0, "shots_hit": 0}
 
 func _init(p_seed: int = 0, p_level: SimLevel = null, p_tuning: SimTuning = null) -> void:
 	seed = p_seed
 	rng.seed = p_seed
-	level = p_level if p_level != null else SimLevel.corridor(CORRIDOR_W, CORRIDOR_L)
+	level = p_level if p_level != null else SimLevel.arena()
 	tuning = p_tuning if p_tuning != null else SimTuning.new()
+
+## Spawn the player at the level's spawn point and start wave 1.
+func begin() -> void:
+	spawn(&"player", level.player_spawn)
+	start_wave(1)
+
+## Wave n: clear remaining grunts, spawn min(cap, 3 + 2*(n-1)) of them at seeded positions,
+## spread over the level's floors, never within SPAWN_MIN_DIST of the player.
+func start_wave(n: int) -> void:
+	wave = n
+	stats.wave = n
+	next_wave_t = 0.0
+	for id in entities.keys():
+		if entities[id].kind == &"grunt":
+			entities.erase(id)
+	var p := player()
+	var count := mini(WAVE_CAP, WAVE_BASE + WAVE_STEP * (n - 1))
+	var placed: Array[Vector2] = []
+	for i in count:
+		var area: Rect2 = level.floors[i % level.floors.size()]
+		var pos := _find_spawn(area, p, placed)
+		spawn(&"grunt", pos)
+		placed.append(pos)
+
+func _find_spawn(area: Rect2, p: SimEntity, placed: Array[Vector2]) -> Vector2:
+	var r := tuning.grunt_radius + 0.1
+	var best := Vector2.INF
+	var best_d := -1.0
+	for attempt in 64:
+		var pos := Vector2(rng.randf_range(area.position.x + r, area.end.x - r),
+			rng.randf_range(area.position.y + r, area.end.y - r))
+		if not level.circle_fits(pos, r):
+			continue
+		var d_player := pos.distance_to(p.pos) if p != null else INF
+		var crowded := false
+		for q in placed:
+			if q.distance_to(pos) < r * 2.5:
+				crowded = true
+				break
+		if crowded:
+			continue
+		if d_player > SPAWN_MIN_DIST:
+			return pos
+		if d_player > best_d:
+			best_d = d_player
+			best = pos
+	return best if best != Vector2.INF else area.get_center()
+
+## Same wave again: player back to full health at the spawn point, fresh grunts and bullets.
+## Tuning is untouched.
+func restart_wave() -> void:
+	var p := player()
+	if p != null:
+		p.alive = true
+		p.hp = p.hp_max
+		p.pos = level.player_spawn
+		p.vel = Vector2.ZERO
+		p.facing = Vector2.DOWN
+		p.state = &"idle"
+	projectiles.clear()
+	dash_t = 0.0
+	dash_cd = 0.0
+	iframes_t = 0.0
+	fire_cd = 0.0
+	start_wave(maxi(1, wave))
+
+func grunts_alive() -> int:
+	var n := 0
+	for e in entities.values():
+		if e.kind == &"grunt" and e.alive:
+			n += 1
+	return n
 
 func spawn(kind: StringName, pos: Vector2) -> SimEntity:
 	var e := SimEntity.new(_next_id, kind, pos)
@@ -72,6 +150,10 @@ func step(dt: float, cmd: Command) -> void:
 			_step_grunt(dt, e, p)
 	_separate()
 	_step_projectiles(dt)
+	if next_wave_t > 0.0 and p.alive:
+		next_wave_t -= dt
+		if next_wave_t <= 0.0:
+			start_wave(wave + 1)
 
 func _step_player(dt: float, p: SimEntity, cmd: Command) -> void:
 	dash_cd = maxf(0.0, dash_cd - dt)
@@ -216,6 +298,9 @@ func damage(id: int, amount: float, dir: Vector2 = Vector2.ZERO) -> bool:
 		if e.id != player_id:
 			stats.kills += 1
 		_emit({"type": "kill", "target": e.id, "pos": e.pos})
+		if e.kind == &"grunt" and wave > 0 and grunts_alive() == 0:
+			_emit({"type": "wave_cleared", "wave": wave})
+			next_wave_t = WAVE_DELAY
 	return true
 
 func _emit(ev: Dictionary) -> void:
@@ -244,6 +329,7 @@ func to_dict() -> Dictionary:
 	return {
 		"seed": seed, "tick": tick, "time": snappedf(time, 0.001),
 		"player_id": player_id, "dashing": is_dashing(), "invulnerable": is_invulnerable(),
+		"wave": wave, "grunts_alive": grunts_alive(), "next_wave_in": snappedf(next_wave_t, 0.01),
 		"stats": stats,
 		"tuning": tuning.to_dict(),
 		"level": level.to_dict(),

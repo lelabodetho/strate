@@ -1,5 +1,9 @@
 extends Node3D
-## Test harness scene: iso camera, 6x24 corridor, one player cube, three grunts. The agent runs this via tools/snap.sh.
+## Test harness scene: the tuning arena. Iso camera following the player, waves of grunts,
+## tuning panel (Tab), HUD. The agent runs this via tools/snap.sh.
+
+const CAM_OFFSET := Vector3(12, 12, 12)
+const CAM_SMOOTH := 8.0
 
 @onready var cam: Camera3D = $Camera3D
 @onready var world_view: WorldView = $WorldView
@@ -10,16 +14,22 @@ extends Node3D
 func _ready() -> void:
 	input.camera = cam
 	var w: SimWorld = GameState.world
-	if w.player() == null:
-		w.spawn(&"player", Vector2(0, 9))
-		w.spawn(&"grunt", Vector2(-1.5, -3))
-		w.spawn(&"grunt", Vector2(1.5, -6))
-		w.spawn(&"grunt", Vector2(0, -9))
 	level_view.build(w.level)
 	world_view.debug = GameState.debug
 	world_view.sync(w)
+	cam.position = _cam_target()
+
+func _cam_target() -> Vector3:
+	var p: SimEntity = GameState.world.player()
+	if p == null:
+		return CAM_OFFSET
+	return Vector3(p.pos.x, 0.0, p.pos.y) + CAM_OFFSET
+
+func _process(dt: float) -> void:
+	cam.position = cam.position.lerp(_cam_target(), 1.0 - exp(-CAM_SMOOTH * dt))
 
 func _physics_process(dt: float) -> void:
-	input.combat_locked = tuning_panel.is_open()
+	GameState.paused = tuning_panel.is_open()
+	input.combat_locked = GameState.paused
 	GameState.step(dt, input.read())
 	world_view.sync(GameState.world)

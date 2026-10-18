@@ -14,6 +14,7 @@ const DODGE_FLASH := Color(0.55, 0.9, 1.0)
 const DODGE_FLASH_TIME := 0.15
 const DEATH_TIME := 0.18
 const DEATH_SCALE := 1.3
+const FALLEN_COLOR := Color(0.4, 0.22, 0.12)
 const DEBUG_BODY_COLOR := Color(1.0, 1.0, 1.0, 0.8)
 const DEBUG_HIT_COLOR := Color(1.0, 0.25, 0.2, 0.9)
 
@@ -27,6 +28,7 @@ var _alive := true
 var _flash_t := 0.0
 var _flash_color := Color.WHITE
 var _death_t := -1.0   # >= 0 while playing the death pop
+var _fallen := false   # player only: stays on the ground after death
 var _debug: Node3D
 
 func setup(e: SimEntity) -> void:
@@ -47,16 +49,26 @@ func sync(e: SimEntity, dashing: bool) -> void:
 	rotation.y = atan2(-e.facing.x, -e.facing.y)
 	_state = e.state
 	_dashing = dashing
+	if e.alive and not _alive:
+		# Revived (wave restart): stand back up.
+		_fallen = false
+		_death_t = -1.0
+		_flash_t = 0.0
+		_mesh.rotation = Vector3.ZERO
+		_mesh.position = Vector3(0.0, 0.8, 0.0)
 	_alive = e.alive
-	visible = _alive or _death_t >= 0.0
+	visible = _alive or _death_t >= 0.0 or _fallen
 
 func flash(color: Color, time: float) -> void:
 	_flash_color = color
 	_flash_t = time
 
 func die() -> void:
-	_death_t = DEATH_TIME
 	visible = true
+	if _kind == &"player":
+		_fallen = true
+	else:
+		_death_t = DEATH_TIME
 
 func set_debug(enabled: bool, e: SimEntity) -> void:
 	if _debug != null:
@@ -81,10 +93,17 @@ func _process(dt: float) -> void:
 	elif _state == &"windup":
 		s = WINDUP_SCALE
 	_mesh.scale = Vector3(s, s, s)
-	_mesh.position.y = 0.8 * s
+	if _fallen:
+		# Lying on its back, head toward where it was facing.
+		_mesh.rotation.x = -PI / 2
+		_mesh.position = Vector3(0.0, 0.4, -0.4)
+	else:
+		_mesh.position.y = 0.8 * s
 
 	var c: Color
-	if _kind == &"player":
+	if _fallen:
+		c = FALLEN_COLOR
+	elif _kind == &"player":
 		c = PLAYER_DASH_COLOR if _dashing else PLAYER_COLOR
 	else:
 		c = WINDUP_COLOR if _state == &"windup" else GRUNT_COLOR
