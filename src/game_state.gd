@@ -15,12 +15,17 @@ extends Node
 ##   --dash=t1,t2,...      ticks on which dash is pressed
 ##   --restart=<frame>     call restart() on that capture frame (tests the death -> R flow)
 ##   --next=<frame>        call next_wave() on that capture frame
+##   --weapon=<name>       hunter | brute | technomancer
+##   --preset=<name>       apply tools/presets/<name>.json at start
 
 const TUNING_PATH := "res://tools/out/tuning.json"
+const PRESET_DIR := "res://tools/presets"
 
 var world: SimWorld
 var debug: bool = false
 var paused: bool = false   # set by the scene while the tuning panel is open; the sim does not step
+var preset_name: String = ""   # last preset applied or saved; "" = none
+var preset_dirty: bool = false # a slider moved since the preset was applied
 var _args: Dictionary = {}
 var _frames_left: int = -1
 var _scripted: bool = false
@@ -28,6 +33,7 @@ var _dash_ticks: Array = []
 var _recent_events: Array = []   # capture mode: [{tick, events}] for the last RECENT_TICKS ticks
 const RECENT_TICKS := 120
 var _frame: int = 0
+var _frozen: bool = false        # capture mode: the sim stops once the frame budget is spent
 var _restart_frame: int = -1
 var _next_frame: int = -1
 
@@ -39,6 +45,10 @@ func _ready() -> void:
 	debug = _args.has("debug")
 	# Reference gameplay values live in tools/out/tuning.json; defaults otherwise.
 	world = SimWorld.new(seed, null, SimTuning.load_file(TUNING_PATH))
+	if _args.has("preset"):
+		apply_preset(String(_args["preset"]))
+	if _args.has("weapon"):
+		world.set_weapon(String(_args["weapon"]))
 	world.begin()
 	if _args.has("screenshot") or _args.has("state"):
 		_frames_left = int(_args.get("frames", "30"))
@@ -49,6 +59,8 @@ func _ready() -> void:
 		_next_frame = int(_args.get("next", "-1"))
 
 func step(dt: float, cmd: Command) -> void:
+	if _frozen:
+		return
 	_frame += 1
 	if _scripted:
 		cmd = _scripted_command()
@@ -68,11 +80,14 @@ func step(dt: float, cmd: Command) -> void:
 	if _frames_left > 0:
 		_frames_left -= 1
 		if _frames_left == 0:
+			# Freeze so the state dump and the screenshot describe the same tick.
+			_frozen = true
 			_harness_capture.call_deferred()
 
 func to_dict() -> Dictionary:
 	var d := world.to_dict()
 	d["paused"] = paused
+	d["preset"] = preset_label()
 	if _scripted:
 		d["recent_events"] = _recent_events
 		d["restarts"] = restarts
@@ -100,15 +115,68 @@ func has_arg(key: String) -> bool:
 # Tuning panel entry points: the UI never touches the sim directly.
 func set_tuning(key: String, value: float) -> void:
 	world.tuning.apply({key: value})
+	preset_dirty = true
 
 func save_tuning() -> bool:
 	return world.tuning.save_file(TUNING_PATH)
 
 func load_tuning() -> void:
 	world.tuning = SimTuning.load_file(TUNING_PATH)
+	preset_name = ""
+	preset_dirty = false
+
+# Presets: named tuning files in tools/presets/. Applying one changes the live tuning only;
+# tools/out/tuning.json is untouched until Save.
+func list_presets() -> PackedStringArray:
+	var out := PackedStringArray()
+	var dir := DirAccess.open(PRESET_DIR)
+	if dir == null:
+		return out
+	for f in dir.get_files():
+		if f.ends_with(".json"):
+			out.append(f.trim_suffix(".json"))
+	out.sort()
+	return out
+
+func preset_path(name: String) -> String:
+	return PRESET_DIR.path_join(name + ".json")
+
+func apply_preset(name: String) -> bool:
+	var path := preset_path(name)
+	if not FileAccess.file_exists(path):
+		return false
+	var parsed = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not parsed is Dictionary:
+		return false
+	world.tuning.apply(parsed)
+	preset_name = name
+	preset_dirty = false
+	return true
+
+func save_preset(name: String) -> bool:
+	name = name.strip_edges().validate_filename()
+	if name.is_empty():
+		return false
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(PRESET_DIR))
+	if not world.tuning.save_file(preset_path(name)):
+		return false
+	preset_name = name
+	preset_dirty = false
+	return true
+
+## "name", "name*" when modified since applied, "" when no preset is active.
+func preset_label() -> String:
+	if preset_name.is_empty():
+		return ""
+	return preset_name + ("*" if preset_dirty else "")
+
+func set_weapon(name: String) -> void:
+	world.set_weapon(name)
 
 func reset_tuning() -> void:
 	world.tuning = SimTuning.new()
+	preset_name = ""
+	preset_dirty = false
 
 func _scripted_command() -> Command:
 	var c := Command.new()

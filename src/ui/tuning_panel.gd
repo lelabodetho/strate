@@ -11,6 +11,10 @@ var _root: PanelContainer
 var _sliders: Dictionary = {}  # key -> HSlider
 var _values: Dictionary = {}   # key -> Label
 var _status: Label
+var _presets: OptionButton
+var _preset_label: Label
+var _save_as_name: LineEdit
+var _weapons: OptionButton
 
 func _ready() -> void:
 	layer = 10
@@ -37,6 +41,51 @@ func _ready() -> void:
 	title.text = "TUNING  [Tab]"
 	vbox.add_child(title)
 
+	# Presets: pick one to apply it live; "Save as…" writes the current values to tools/presets/.
+	var preset_row := HBoxContainer.new()
+	vbox.add_child(preset_row)
+	var preset_title := Label.new()
+	preset_title.text = "preset"
+	preset_title.custom_minimum_size.x = 60
+	preset_row.add_child(preset_title)
+	_presets = OptionButton.new()
+	_presets.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_presets.focus_mode = Control.FOCUS_NONE
+	_presets.item_selected.connect(_on_preset_selected)
+	preset_row.add_child(_presets)
+	_preset_label = Label.new()
+	_preset_label.custom_minimum_size.x = 90
+	_preset_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	preset_row.add_child(_preset_label)
+
+	var save_row := HBoxContainer.new()
+	vbox.add_child(save_row)
+	_save_as_name = LineEdit.new()
+	_save_as_name.placeholder_text = "nom du preset"
+	_save_as_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_save_as_name.text_submitted.connect(func(_t): _on_save_as())
+	save_row.add_child(_save_as_name)
+	var save_as := Button.new()
+	save_as.text = "Save as…"
+	save_as.focus_mode = Control.FOCUS_NONE
+	save_as.pressed.connect(_on_save_as)
+	save_row.add_child(save_as)
+
+	# Weapon profile (keys 1/2/3 do the same).
+	var weapon_row := HBoxContainer.new()
+	vbox.add_child(weapon_row)
+	var weapon_title := Label.new()
+	weapon_title.text = "arme"
+	weapon_title.custom_minimum_size.x = 60
+	weapon_row.add_child(weapon_title)
+	_weapons = OptionButton.new()
+	_weapons.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_weapons.focus_mode = Control.FOCUS_NONE
+	for i in WeaponProfile.NAMES.size():
+		_weapons.add_item("%d · %s" % [i + 1, WeaponProfile.NAMES[i]], i)
+	_weapons.item_selected.connect(func(i: int): GameState.set_weapon(WeaponProfile.NAMES[i]))
+	weapon_row.add_child(_weapons)
+
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -52,6 +101,7 @@ func _ready() -> void:
 	for b in [["Save", _on_save], ["Load", _on_load], ["Defaults", _on_defaults]]:
 		var btn := Button.new()
 		btn.text = b[0]
+		btn.focus_mode = Control.FOCUS_NONE
 		btn.pressed.connect(b[1])
 		buttons.add_child(btn)
 	_status = Label.new()
@@ -88,17 +138,32 @@ func _make_row(spec: Array) -> HBoxContainer:
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_TAB:
 		_root.visible = not _root.visible
+		if _root.visible:
+			refresh()
 		get_viewport().set_input_as_handled()
 
 func is_open() -> bool:
 	return _root.visible
 
-## Pull the current sim values into the sliders.
+## Pull the current sim values into the sliders, the preset list and the weapon selector.
 func refresh() -> void:
 	var t: Dictionary = GameState.world.tuning.to_dict()
 	for key in _sliders:
 		_sliders[key].set_value_no_signal(t[key])
 		_values[key].text = _fmt(t[key])
+	_presets.clear()
+	_presets.add_item("—", 0)
+	var names := GameState.list_presets()
+	for i in names.size():
+		_presets.add_item(names[i], i + 1)
+		if names[i] == GameState.preset_name:
+			_presets.select(i + 1)
+	_weapons.select(WeaponProfile.NAMES.find(GameState.world.weapon.name))
+	_refresh_preset_label()
+
+func _refresh_preset_label() -> void:
+	var l := GameState.preset_label()
+	_preset_label.text = l if not l.is_empty() else "(aucun)"
 
 func _fmt(v: float) -> String:
 	return ("%.2f" % v).trim_suffix("0").trim_suffix("0").trim_suffix(".")
@@ -106,6 +171,29 @@ func _fmt(v: float) -> String:
 func _on_slider(value: float, key: String) -> void:
 	GameState.set_tuning(key, value)
 	_values[key].text = _fmt(value)
+	_refresh_preset_label()
+
+func _on_preset_selected(index: int) -> void:
+	if index <= 0:
+		return
+	var name := _presets.get_item_text(index)
+	if GameState.apply_preset(name):
+		refresh()
+		_status.text = "preset " + name + " appliqué (tuning.json intact)"
+	else:
+		_status.text = "preset introuvable: " + name
+
+func _on_save_as() -> void:
+	var name := _save_as_name.text.strip_edges()
+	if name.is_empty():
+		_status.text = "donne un nom au preset"
+		return
+	if GameState.save_preset(name):
+		_save_as_name.text = ""
+		refresh()
+		_status.text = "preset -> " + GameState.preset_path(GameState.preset_name)
+	else:
+		_status.text = "save as FAILED: " + name
 
 func _on_save() -> void:
 	_status.text = ("saved -> " if GameState.save_tuning() else "save FAILED: ") + GameState.TUNING_PATH

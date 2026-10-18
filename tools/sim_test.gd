@@ -18,6 +18,9 @@ func _init() -> void:
 	test_waves()
 	test_wave_clear_and_next()
 	test_restart_keeps_tuning()
+	test_brute_cone()
+	test_technomancer_blast()
+	test_weapon_switch_keeps_tuning()
 	print("[sim_test] ", "OK" if failures == 0 else "FAILED (%d)" % failures)
 	quit(1 if failures > 0 else 0)
 
@@ -248,3 +251,81 @@ func test_restart_keeps_tuning() -> void:
 		"restart keeps the same tuning object and values")
 	check(p.alive and p.hp == p.hp_max and p.pos == w.level.player_spawn, "restart revives the player at the spawn")
 	check(w.wave == 3 and w.grunts_alive() == 7 and w.projectiles.is_empty(), "restart replays the same wave")
+
+func _still_grunt(w: SimWorld, pos: Vector2) -> SimEntity:
+	var g := w.spawn(&"grunt", pos)
+	g.state = &"recover"
+	g.state_t = 100.0
+	return g
+
+func test_brute_cone() -> void:
+	var w := SimWorld.new(1)
+	var p := w.spawn(&"player", Vector2(0, 0))
+	w.set_weapon("brute")
+	var near := _still_grunt(w, Vector2(0, -1.5))
+	var far := _still_grunt(w, Vector2(0, -1.8))
+	var side := _still_grunt(w, Vector2(1.3, -0.75))   # 1.5 away, 60 degrees off the aim
+	var near_z := near.pos.y
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	var expected := w.tuning.proj_damage * 2.5
+	check(near.hp == near.hp_max - expected, "cone hits at 1.5 for 2.5x damage (hp=%.0f)" % near.hp)
+	check(far.hp == far.hp_max, "cone misses at 1.8")
+	check(side.hp == side.hp_max, "cone misses at 1.5 but 60 degrees off")
+	check(is_equal_approx(near_z - near.pos.y, w.tuning.knockback * 2.0), "cone knockback is doubled (%.2f)" % (near_z - near.pos.y))
+	var swings := 0
+	for ev in w.events:
+		if ev.type == "swing":
+			swings += 1
+	check(swings == 1 and w.projectiles.is_empty(), "swing event, no projectile")
+	var z0 := p.pos.y
+	run(w, 0.2, cmd())
+	check(absf((z0 - p.pos.y) - 0.8) < 0.001, "lunge covers exactly 0.8 along the aim (%.3f)" % (z0 - p.pos.y))
+	check(_count_swings(w, 0.25) == 0, "cadence: no second swing before 0.5 s")
+	check(_count_swings(w, 0.1) == 1, "second swing after 0.5 s")
+
+func _count_swings(w: SimWorld, seconds: float) -> int:
+	var n := 0
+	for i in int(round(seconds / DT)):
+		w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), true))
+		for ev in w.events:
+			if ev.type == "swing":
+				n += 1
+	return n
+
+func test_technomancer_blast() -> void:
+	var w := SimWorld.new(1)
+	w.spawn(&"player", Vector2(0, 9))
+	w.set_weapon("technomancer")
+	# Shot flies 10 u/s for 1.5 s from z=8.4 and bursts at z=-6.6.
+	var inside := _still_grunt(w, Vector2(1.9, -6.6))
+	var outside := _still_grunt(w, Vector2(-2.1, -6.6))
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	check(w.projectiles.size() == 1 and w.projectiles.values()[0].blast_radius == 2.0, "technomancer fires a blast projectile")
+	var explosions := []
+	for i in 100:
+		w.step(DT, cmd())
+		for ev in w.events:
+			if ev.type == "explosion":
+				explosions.append(ev)
+	check(explosions.size() == 1 and explosions[0].radius == 2.0, "one explosion at end of life (%d)" % explosions.size())
+	check(inside.hp < inside.hp_max, "explosion hits at 1.9 (hp=%.1f)" % inside.hp)
+	check(outside.hp == outside.hp_max, "explosion misses at 2.1")
+	# Center damage: a grunt right under the burst takes 2x.
+	var w2 := SimWorld.new(1)
+	w2.spawn(&"player", Vector2(0, 9))
+	w2.set_weapon("technomancer")
+	var g := _still_grunt(w2, Vector2(0, 5))
+	w2.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	run(w2, 0.5, cmd())
+	var taken := g.hp_max - g.hp
+	check(is_equal_approx(taken, w2.tuning.proj_damage * 2.0), "direct contact burst deals the full 2x (%.1f)" % taken)
+
+func test_weapon_switch_keeps_tuning() -> void:
+	var w := SimWorld.new(1)
+	w.tuning.proj_damage = 13.0
+	var before := JSON.stringify(w.tuning.to_dict())
+	var obj := w.tuning
+	for n in WeaponProfile.NAMES:
+		w.set_weapon(n)
+	check(w.weapon.name == "technomancer" and w.tuning == obj and JSON.stringify(w.tuning.to_dict()) == before,
+		"switching profiles leaves the tuning object and values untouched")

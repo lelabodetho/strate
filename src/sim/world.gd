@@ -13,6 +13,7 @@ const SPAWN_MIN_DIST := 8.0    # grunts never appear closer than this to the pla
 var seed: int
 var level: SimLevel
 var tuning: SimTuning
+var weapon: WeaponProfile = WeaponProfile.hunter()
 var rng := RandomNumberGenerator.new()
 var tick: int = 0
 var time: float = 0.0
@@ -21,12 +22,15 @@ var projectiles: Dictionary = {}  # id -> SimProjectile (removed when they die)
 var player_id: int = -1
 var _next_id: int = 1
 var fire_cd: float = 0.0
+var swing_t: float = 0.0        # > 0 while the brute's swing (and lunge) plays
+var swing_dir: Vector2 = Vector2.DOWN
 var wave: int = 0
 var next_wave_t: float = 0.0   # > 0 while counting down to the next wave
 
 # What happened during the last step(), for the view and the harness. Cleared every step.
 # {type:"hit", target, pos, dir, damage} {type:"kill", target, pos} {type:"dodge", pos}
 # {type:"shot", pos, dir} {type:"impact", pos} {type:"wave_cleared", wave}
+# {type:"swing", pos, dir} {type:"explosion", pos, radius}
 var events: Array[Dictionary] = []
 
 # Dash state (player only for now)
@@ -136,6 +140,12 @@ func spawn(kind: StringName, pos: Vector2) -> SimEntity:
 func player() -> SimEntity:
 	return entities.get(player_id)
 
+## Switch the attack profile. Tuning is untouched; only the multipliers change.
+func set_weapon(n: String) -> void:
+	weapon = WeaponProfile.by_name(n)
+	fire_cd = 0.0
+	swing_t = 0.0
+
 func step(dt: float, cmd: Command) -> void:
 	tick += 1
 	time += dt
@@ -167,6 +177,11 @@ func _step_player(dt: float, p: SimEntity, cmd: Command) -> void:
 	if dash_t > 0.0:
 		dash_t -= dt
 		p.vel = dash_dir * tuning.dash_speed
+	elif swing_t > 0.0:
+		# Bounded so the lunge covers exactly `lunge` whatever the tick rounding.
+		var t := minf(dt, swing_t)
+		swing_t -= dt
+		p.vel = swing_dir * (weapon.lunge / weapon.swing_time) * (t / dt)
 	else:
 		p.vel = cmd.move * tuning.player_speed
 
@@ -178,32 +193,85 @@ func _step_player(dt: float, p: SimEntity, cmd: Command) -> void:
 
 	fire_cd = maxf(0.0, fire_cd - dt)
 	if cmd.attack and fire_cd <= 0.0 and not is_dashing():
-		fire_cd = tuning.fire_interval
-		_fire(p, p.facing)
+		fire_cd = tuning.fire_interval * weapon.fire_interval_mult
+		match weapon.kind:
+			&"cone":
+				_swing(p, p.facing)
+			_:
+				_fire(p, p.facing)
 
 func _fire(owner: SimEntity, dir: Vector2) -> void:
 	var start := owner.pos + dir * tuning.muzzle_offset
 	if level.is_blocked(start):
 		return
-	var b := SimProjectile.new(_next_id, owner, start, dir * tuning.proj_speed)
+	var b := SimProjectile.new(_next_id, owner, start, dir * tuning.proj_speed * weapon.proj_speed_mult)
 	_next_id += 1
-	b.radius = tuning.proj_radius
-	b.damage = tuning.proj_damage
+	b.radius = tuning.proj_radius * weapon.proj_radius_mult
+	b.damage = tuning.proj_damage * weapon.damage_mult
 	b.ttl = tuning.proj_ttl
+	if weapon.kind == &"blast":
+		b.blast_radius = weapon.blast_radius
 	projectiles[b.id] = b
 	stats.shots += 1
 	_emit({"type": "shot", "pos": start, "dir": dir})
+
+## Brute: hit every grunt whose center is within cone_range and within half the cone angle
+## of the aim, then lunge forward for swing_time.
+func _swing(owner: SimEntity, dir: Vector2) -> void:
+	swing_t = weapon.swing_time
+	swing_dir = dir
+	stats.shots += 1
+	_emit({"type": "swing", "pos": owner.pos, "dir": dir})
+	var cos_half := cos(deg_to_rad(weapon.cone_angle_deg * 0.5))
+	var hit_any := false
+	for e in entities.values():
+		if not e.alive or e.id == owner.id or e.kind == owner.kind:
+			continue
+		var to_e: Vector2 = e.pos - owner.pos
+		var d := to_e.length()
+		if d > weapon.cone_range or d < 0.0001:
+			continue
+		if to_e.dot(dir) / d < cos_half:
+			continue
+		damage(e.id, tuning.proj_damage * weapon.damage_mult, dir, weapon.knockback_mult)
+		hit_any = true
+	if hit_any:
+		stats.shots_hit += 1
+
+## Technomancer: damage everything within radius, full at the center, blast_edge_factor at the
+## edge. A target hit directly by the projectile (direct_id) always takes the center damage.
+func _explode(center: Vector2, radius: float, center_damage: float, owner_id: int, owner_kind: StringName, direct_id: int = -1) -> void:
+	_emit({"type": "explosion", "pos": center, "radius": radius})
+	var hit_any := false
+	for e in entities.values():
+		if not e.alive or e.id == owner_id or e.kind == owner_kind:
+			continue
+		var d: float = e.pos.distance_to(center)
+		if d > radius and e.id != direct_id:
+			continue
+		var k := 1.0 if e.id == direct_id else lerpf(1.0, weapon.blast_edge_factor, d / radius)
+		var dir: Vector2 = (e.pos - center).normalized() if d > 0.0001 else Vector2.ZERO
+		damage(e.id, center_damage * k, dir)
+		hit_any = true
+	if hit_any and owner_id == player_id:
+		stats.shots_hit += 1
 
 func _step_projectiles(dt: float) -> void:
 	var dead: Array[int] = []
 	for b in projectiles.values():
 		b.ttl -= dt
+		var prev: Vector2 = b.pos
 		b.pos += b.vel * dt
 		if level.is_blocked(b.pos):
-			_emit({"type": "impact", "pos": b.pos})
+			if b.blast_radius > 0.0:
+				_explode(prev, b.blast_radius, b.damage, b.owner_id, b.owner_kind)
+			else:
+				_emit({"type": "impact", "pos": b.pos})
 			dead.append(b.id)
 			continue
 		if b.ttl <= 0.0:
+			if b.blast_radius > 0.0:
+				_explode(b.pos, b.blast_radius, b.damage, b.owner_id, b.owner_kind)
 			dead.append(b.id)
 			continue
 		for e in entities.values():
@@ -211,9 +279,12 @@ func _step_projectiles(dt: float) -> void:
 				continue
 			var r: float = e.hit_radius + b.radius
 			if e.pos.distance_squared_to(b.pos) <= r * r:
-				damage(e.id, b.damage, b.vel.normalized())
-				if b.owner_id == player_id:
-					stats.shots_hit += 1
+				if b.blast_radius > 0.0:
+					_explode(b.pos, b.blast_radius, b.damage, b.owner_id, b.owner_kind, e.id)
+				else:
+					damage(e.id, b.damage, b.vel.normalized())
+					if b.owner_id == player_id:
+						stats.shots_hit += 1
 				dead.append(b.id)
 				break
 	for id in dead:
@@ -275,9 +346,9 @@ func _separate() -> void:
 				a.pos = level.resolve_circle(a.pos - push, a.radius)
 				b.pos = level.resolve_circle(b.pos + push, b.radius)
 
-## Apply damage to an entity, pushing it along `dir`. Returns true if it landed
-## (false if dead, missing, or invulnerable).
-func damage(id: int, amount: float, dir: Vector2 = Vector2.ZERO) -> bool:
+## Apply damage to an entity, pushing it along `dir` by knockback * kb_mult. Returns true if it
+## landed (false if dead, missing, or invulnerable).
+func damage(id: int, amount: float, dir: Vector2 = Vector2.ZERO, kb_mult: float = 1.0) -> bool:
 	var e: SimEntity = entities.get(id)
 	if e == null or not e.alive:
 		return false
@@ -287,7 +358,7 @@ func damage(id: int, amount: float, dir: Vector2 = Vector2.ZERO) -> bool:
 		return false
 	e.hp = maxf(0.0, e.hp - amount)
 	if dir != Vector2.ZERO:
-		e.pos = level.resolve_circle(e.pos + dir * tuning.knockback, e.radius)
+		e.pos = level.resolve_circle(e.pos + dir * tuning.knockback * kb_mult, e.radius)
 	_emit({"type": "hit", "target": e.id, "pos": e.pos, "dir": dir, "damage": amount})
 	if e.id == player_id:
 		stats.hits_taken += 1
@@ -330,6 +401,7 @@ func to_dict() -> Dictionary:
 		"seed": seed, "tick": tick, "time": snappedf(time, 0.001),
 		"player_id": player_id, "dashing": is_dashing(), "invulnerable": is_invulnerable(),
 		"wave": wave, "grunts_alive": grunts_alive(), "next_wave_in": snappedf(next_wave_t, 0.01),
+		"weapon": weapon.name,
 		"stats": stats,
 		"tuning": tuning.to_dict(),
 		"level": level.to_dict(),

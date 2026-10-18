@@ -1,7 +1,8 @@
 class_name Hud
 extends CanvasLayer
 ## Minimal HUD for the tuning arena: wave line top-left, "R pour recommencer" on death.
-## Meta keys (physical, layout-independent): R restart the wave (when dead), N next wave, 0 back to wave 1.
+## Meta keys (physical, layout-independent): R restart the wave (when dead), N next wave,
+## 0 back to wave 1, 1/2/3 weapon profile.
 ## Everything goes through GameState; the HUD never touches the sim.
 
 const TEXT_COLOR := Color(0.85, 0.82, 0.78)
@@ -45,7 +46,11 @@ func _process(dt: float) -> void:
 	var w: SimWorld = GameState.world
 	var p: SimEntity = w.player()
 	var hp := int(round(p.hp)) if p != null else 0
-	_wave_label.text = "Vague %d · %d grunts · %d PV" % [w.wave, w.grunts_alive(), hp]
+	var line := "Vague %d · %d grunts · %d PV · %s" % [w.wave, w.grunts_alive(), hp, w.weapon.name]
+	var preset := GameState.preset_label()
+	if not preset.is_empty():
+		line += " · " + preset
+	_wave_label.text = line
 	_flash_t = maxf(0.0, _flash_t - dt)
 	var k := _flash_t / FLASH_TIME
 	_wave_label.add_theme_color_override("font_color", TEXT_COLOR.lerp(FLASH_COLOR, k))
@@ -65,4 +70,13 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		KEY_0, KEY_KP_0:
 			GameState.reset_waves()
+			get_viewport().set_input_as_handled()
+		KEY_1, KEY_KP_1:
+			GameState.set_weapon("hunter")
+			get_viewport().set_input_as_handled()
+		KEY_2, KEY_KP_2:
+			GameState.set_weapon("brute")
+			get_viewport().set_input_as_handled()
+		KEY_3, KEY_KP_3:
+			GameState.set_weapon("technomancer")
 			get_viewport().set_input_as_handled()

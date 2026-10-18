@@ -10,6 +10,7 @@ var vel: Vector2
 var radius: float = 0.25
 var damage: float = 10.0
 var ttl: float = 1.5
+var blast_radius: float = 0.0   # > 0: bursts on contact, wall or end of life instead of a direct hit
 
 func _init(p_id: int, p_owner: SimEntity, p_pos: Vector2, p_vel: Vector2) -> void:
 	id = p_id
