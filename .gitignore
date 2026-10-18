@@ -1,0 +1,13 @@
+# Godot
+.godot/
+/android/
+*.import.tmp
+
+# Exports
+/export/
+
+# Harness output
+/tools/out/
+
+# OS
+.DS_Store
