@@ -30,7 +30,7 @@ var next_wave_t: float = 0.0   # > 0 while counting down to the next wave
 # What happened during the last step(), for the view and the harness. Cleared every step.
 # {type:"hit", target, pos, dir, damage} {type:"kill", target, pos} {type:"dodge", pos}
 # {type:"shot", pos, dir} {type:"impact", pos} {type:"wave_cleared", wave}
-# {type:"swing", pos, dir} {type:"explosion", pos, radius}
+# {type:"swing", pos, dir} {type:"explosion", pos, radius} {type:"stagger", target}
 var events: Array[Dictionary] = []
 
 # Dash state (player only for now)
@@ -101,6 +101,7 @@ func restart_wave() -> void:
 	var p := player()
 	if p != null:
 		p.alive = true
+		p.hp_max = tuning.player_hp * weapon.hp_mult
 		p.hp = p.hp_max
 		p.pos = level.player_spawn
 		p.vel = Vector2.ZERO
@@ -125,7 +126,7 @@ func spawn(kind: StringName, pos: Vector2) -> SimEntity:
 	_next_id += 1
 	match kind:
 		&"player":
-			e.hp_max = tuning.player_hp
+			e.hp_max = tuning.player_hp * weapon.hp_mult
 			e.radius = tuning.player_radius
 			e.hit_radius = tuning.player_radius
 			player_id = e.id
@@ -141,10 +142,16 @@ func player() -> SimEntity:
 	return entities.get(player_id)
 
 ## Switch the attack profile. Tuning is untouched; only the multipliers change.
+## The player keeps the same health fraction under the new max.
 func set_weapon(n: String) -> void:
 	weapon = WeaponProfile.by_name(n)
 	fire_cd = 0.0
 	swing_t = 0.0
+	var p := player()
+	if p != null:
+		var frac := p.hp / p.hp_max if p.hp_max > 0.0 else 1.0
+		p.hp_max = tuning.player_hp * weapon.hp_mult
+		p.hp = p.hp_max * frac
 
 func step(dt: float, cmd: Command) -> void:
 	tick += 1
@@ -220,6 +227,7 @@ func _fire(owner: SimEntity, dir: Vector2) -> void:
 func _swing(owner: SimEntity, dir: Vector2) -> void:
 	swing_t = weapon.swing_time
 	swing_dir = dir
+	iframes_t = maxf(iframes_t, weapon.attack_iframes)
 	stats.shots += 1
 	_emit({"type": "swing", "pos": owner.pos, "dir": dir})
 	var cos_half := cos(deg_to_rad(weapon.cone_angle_deg * 0.5))
@@ -356,7 +364,15 @@ func damage(id: int, amount: float, dir: Vector2 = Vector2.ZERO, kb_mult: float 
 		stats.dodged += 1
 		_emit({"type": "dodge", "pos": e.pos})
 		return false
+	if e.id == player_id:
+		amount *= weapon.damage_taken_mult
 	e.hp = maxf(0.0, e.hp - amount)
+	if e.state == &"windup":
+		# Stagger: a grunt hit while winding up loses its attack and goes straight to recover.
+		e.state = &"recover"
+		e.state_t = tuning.grunt_recover
+		e.attack_cd = tuning.grunt_recover
+		_emit({"type": "stagger", "target": e.id})
 	if dir != Vector2.ZERO:
 		e.pos = level.resolve_circle(e.pos + dir * tuning.knockback * kb_mult, e.radius)
 	_emit({"type": "hit", "target": e.id, "pos": e.pos, "dir": dir, "damage": amount})

@@ -21,6 +21,8 @@ func _init() -> void:
 	test_brute_cone()
 	test_technomancer_blast()
 	test_weapon_switch_keeps_tuning()
+	test_stagger()
+	test_body_stats()
 	print("[sim_test] ", "OK" if failures == 0 else "FAILED (%d)" % failures)
 	quit(1 if failures > 0 else 0)
 
@@ -296,9 +298,9 @@ func test_technomancer_blast() -> void:
 	var w := SimWorld.new(1)
 	w.spawn(&"player", Vector2(0, 9))
 	w.set_weapon("technomancer")
-	# Shot flies 10 u/s for 1.5 s from z=8.4 and bursts at z=-6.6.
-	var inside := _still_grunt(w, Vector2(1.9, -6.6))
-	var outside := _still_grunt(w, Vector2(-2.1, -6.6))
+	# Shot flies 8 u/s for 1.5 s from z=8.4 and bursts at z=-3.6.
+	var inside := _still_grunt(w, Vector2(1.9, -3.6))
+	var outside := _still_grunt(w, Vector2(-2.1, -3.6))
 	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), true))
 	check(w.projectiles.size() == 1 and w.projectiles.values()[0].blast_radius == 2.0, "technomancer fires a blast projectile")
 	var explosions := []
@@ -329,3 +331,62 @@ func test_weapon_switch_keeps_tuning() -> void:
 		w.set_weapon(n)
 	check(w.weapon.name == "technomancer" and w.tuning == obj and JSON.stringify(w.tuning.to_dict()) == before,
 		"switching profiles leaves the tuning object and values untouched")
+
+func test_stagger() -> void:
+	var w := SimWorld.new(1)
+	var p := w.spawn(&"player", Vector2(0, 9))
+	var g := w.spawn(&"grunt", Vector2(0, 7.8))   # at contact
+	var guard := 0
+	while g.state != &"windup" and guard < 600:
+		w.step(DT, cmd())
+		guard += 1
+	check(g.state == &"windup", "grunt winds up at contact")
+	w.damage(g.id, 1.0, Vector2.ZERO)
+	var staggered := false
+	for ev in w.events:
+		if ev.type == "stagger" and ev.target == g.id:
+			staggered = true
+	check(staggered and g.state == &"recover" and is_equal_approx(g.state_t, w.tuning.grunt_recover),
+		"hit during windup: stagger event, straight to recover")
+	run(w, w.tuning.grunt_recover + 0.05, cmd())
+	check(w.stats.hits_taken == 0 and p.hp == p.hp_max, "the interrupted attack never lands")
+	run(w, 1.5, cmd())
+	check(w.stats.hits_taken >= 1, "the grunt attacks again after recovering (hits=%d)" % w.stats.hits_taken)
+
+func test_body_stats() -> void:
+	var w := SimWorld.new(1)
+	w.set_weapon("brute")
+	var p := w.spawn(&"player", Vector2(0, 9))
+	check(is_equal_approx(p.hp_max, w.tuning.player_hp * 1.6) and p.hp == p.hp_max, "brute spawns with 1.6x hp (%.0f)" % p.hp_max)
+	w.damage(p.id, 10.0)
+	check(is_equal_approx(p.hp_max - p.hp, 6.5), "brute takes 0.65x damage (%.2f)" % (p.hp_max - p.hp))
+	w.set_weapon("technomancer")
+	check(is_equal_approx(p.hp_max, w.tuning.player_hp * 0.85), "technomancer max hp is 0.85x (%.1f)" % p.hp_max)
+	var frac := p.hp / p.hp_max
+	check(absf(frac - (1.0 - 6.5 / (w.tuning.player_hp * 1.6))) < 0.001, "switching keeps the health fraction (%.3f)" % frac)
+	var before := p.hp
+	w.damage(p.id, 10.0)
+	check(is_equal_approx(before - p.hp, 11.0), "technomancer takes 1.1x damage (%.1f)" % (before - p.hp))
+	w.set_weapon("hunter")
+	before = p.hp
+	w.damage(p.id, 10.0)
+	check(is_equal_approx(before - p.hp, 10.0) and is_equal_approx(p.hp_max, w.tuning.player_hp), "hunter is 1.0x on both")
+	var t_before := JSON.stringify(w.tuning.to_dict())
+	w.set_weapon("brute")
+	check(JSON.stringify(w.tuning.to_dict()) == t_before, "body stats never touch the tuning")
+	# Brute swing grants 0.12 s of i-frames; the other profiles none.
+	w.restart_wave()
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	check(w.is_invulnerable() and absf(w.iframes_t - 0.12) < 0.001, "brute swing grants 0.12 s i-frames (%.3f)" % w.iframes_t)
+	var dodged: bool = (not w.damage(p.id, 10.0)) and w.stats.dodged == 1
+	check(dodged, "a hit during the swing is dodged")
+	w.set_weapon("hunter")
+	w.restart_wave()
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	check(not w.is_invulnerable(), "hunter shot grants no i-frames")
+	var w2 := SimWorld.new(1)
+	w2.set_weapon("technomancer")
+	w2.spawn(&"player", Vector2(0, 9))
+	w2.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	check(not w2.is_invulnerable() and is_equal_approx(w2.projectiles.values()[0].vel.length(), w2.tuning.proj_speed * 0.4),
+		"technomancer: no i-frames, projectile at 0.4x speed (%.1f)" % w2.projectiles.values()[0].vel.length())

@@ -14,6 +14,11 @@ var fire_interval_mult := 1.0
 var proj_speed_mult := 1.0
 var proj_radius_mult := 1.0
 
+# body: applied on tuning.player_hp and on every hit the player takes
+var hp_mult := 1.0
+var damage_taken_mult := 1.0
+var attack_iframes := 0.0      # i-frames granted when the attack starts (seconds)
+
 # cone (brute)
 var cone_angle_deg := 90.0
 var cone_range := 1.6
@@ -36,6 +41,9 @@ static func brute() -> WeaponProfile:
 	w.damage_mult = 2.5
 	w.knockback_mult = 2.0
 	w.fire_interval_mult = 0.5 / 0.15   # 0.5 s with the default 0.15 s
+	w.hp_mult = 1.6
+	w.damage_taken_mult = 0.65
+	w.attack_iframes = 0.12
 	return w
 
 ## Slow, fat projectile that bursts on contact or at end of life: 2x damage at the center,
@@ -46,8 +54,10 @@ static func technomancer() -> WeaponProfile:
 	w.kind = &"blast"
 	w.damage_mult = 2.0
 	w.fire_interval_mult = 0.6 / 0.15   # 0.6 s with the default 0.15 s
-	w.proj_speed_mult = 10.0 / 20.0     # 10 with the default 20
+	w.proj_speed_mult = 8.0 / 20.0      # 8 with the default 20
 	w.proj_radius_mult = 0.35 / 0.25    # 0.35 with the default 0.25
+	w.hp_mult = 0.85
+	w.damage_taken_mult = 1.1
 	return w
 
 static func by_name(n: String) -> WeaponProfile:
