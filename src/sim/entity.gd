@@ -7,9 +7,16 @@ var kind: StringName          # &"player", &"grunt", ...
 var pos: Vector2
 var vel: Vector2 = Vector2.ZERO
 var facing: Vector2 = Vector2.DOWN
+var radius: float = 0.4       # body: separation and walls
+var hit_radius: float = 0.4   # what a projectile has to touch
 var hp: float = 100.0
 var hp_max: float = 100.0
 var alive: bool = true
+
+# AI / combat state (grunts). Player uses the world-level dash fields.
+var state: StringName = &"idle"   # &"idle" | &"chase" | &"windup" | &"recover" | &"dead"
+var state_t: float = 0.0          # seconds left in the current timed state
+var attack_cd: float = 0.0
 
 func _init(p_id: int, p_kind: StringName, p_pos: Vector2) -> void:
 	id = p_id
@@ -21,5 +28,6 @@ func to_dict() -> Dictionary:
 		"id": id, "kind": String(kind),
 		"pos": [snappedf(pos.x, 0.01), snappedf(pos.y, 0.01)],
 		"facing": [snappedf(facing.x, 0.01), snappedf(facing.y, 0.01)],
-		"hp": hp, "alive": alive,
+		"radius": radius, "hit_radius": hit_radius,
+		"hp": hp, "alive": alive, "state": String(state),
 	}

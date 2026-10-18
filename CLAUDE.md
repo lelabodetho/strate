@@ -31,6 +31,8 @@ Ces règles préparent la coop 1–4 (jalon 5) sans la coder maintenant.
 - `GameState` (autoload) expose `to_dict()` et répond aux flags CLI `--screenshot=<path>` et `--state=<path>` puis quitte.
 - `tools/snap.sh` : lance la scène, capture, dump l'état. À utiliser après chaque changement visuel ou de gameplay.
 - Ne jamais déclarer une feature terminée sans avoir lancé `tools/snap.sh` et regardé l'image.
+- `tools/sim_test.gd` : tests headless de la sim (`godot --headless --path . -s tools/sim_test.gd`). À lancer après tout changement dans `src/sim/`.
+- Les valeurs de référence du gameplay sont dans `tools/out/tuning.json`, pas dans le code. `SimTuning` porte les défauts, le panneau in-game (Tab) les édite et les sauve, `GameState` charge le fichier au démarrage.
 
 ## Assets
 3D low-poly + shader de post-process (dither / pixel). Le filtre final se décide sur `scenes/test/render_test.tscn`. Palette : gris acier, rouille, noir, un accent. Pas de textures au départ : couleurs plates.
