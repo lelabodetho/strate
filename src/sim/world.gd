@@ -378,6 +378,7 @@ func _wake(g: SimEntity) -> void:
 
 func _step_grunt(dt: float, g: SimEntity, p: SimEntity) -> void:
 	g.attack_cd = maxf(0.0, g.attack_cd - dt)
+	g.provoked_t = maxf(0.0, g.provoked_t - dt)
 	g.vel = Vector2.ZERO
 	var to_p := p.pos - g.pos
 	var dist := to_p.length()
@@ -405,8 +406,8 @@ func _step_grunt(dt: float, g: SimEntity, p: SimEntity) -> void:
 		&"chase":
 			if not p.alive:
 				g.state = &"idle"
-			elif dist > tuning.grunt_aggro * tuning.aggro_drop_mult:
-				# Leash: too far, give up and walk home.
+			elif dist > tuning.grunt_aggro * tuning.aggro_drop_mult and g.provoked_t <= 0.0:
+				# Leash: too far and not provoked, give up and walk home.
 				g.state = &"return"
 				_emit({"type": "deaggro", "id": g.id})
 			elif dist <= contact and g.attack_cd <= 0.0:
@@ -466,6 +467,8 @@ func damage(id: int, amount: float, dir: Vector2 = Vector2.ZERO, kb_mult: float 
 	if e.id == player_id:
 		amount *= weapon.damage_taken_mult
 	e.hp = maxf(0.0, e.hp - amount)
+	if e.kind == &"grunt":
+		e.provoked_t = tuning.provoke_time
 	if e.state == &"windup":
 		# Stagger: a grunt hit while winding up loses its attack and goes straight to recover.
 		e.state = &"recover"

@@ -28,6 +28,7 @@ func _init() -> void:
 	test_hit_wakes_pack()
 	test_leash()
 	test_wave_packs()
+	test_provoke()
 	print("[sim_test] ", "OK" if failures == 0 else "FAILED (%d)" % failures)
 	quit(1 if failures > 0 else 0)
 
@@ -530,3 +531,34 @@ func test_wave_packs() -> void:
 			sizes_ok = sizes_ok and sizes[k] >= 2 and sizes[k] <= 4
 		check(grunts.size() == expected and packs >= 2 and packs <= 4 and sizes_ok and in_radius and far,
 			"wave %d: %d grunts in %d packs of %s, all within %.0f of their center and > %.0f from the player" % [n, grunts.size(), packs, sizes.values(), SimWorld.PACK_RADIUS, SimWorld.SPAWN_MIN_DIST])
+
+func test_provoke() -> void:
+	# aggro 14: leash at 25.2. A grunt hit from 26 chases anyway; an unprovoked one lets go.
+	var w := SimWorld.new(1)
+	w.tuning.grunt_aggro = 14.0
+	w.spawn(&"player", Vector2(0, 9))
+	var hit := _idle_grunt(w, Vector2(0, -17))      # 26 from the player
+	var quiet := _idle_grunt(w, Vector2(-3, -17))   # 3 from it: woken by the hit, never hit itself, 26.2 from the player
+	w.damage(hit.id, 1.0)
+	check(hit.state == &"chase" and is_equal_approx(hit.provoked_t, w.tuning.provoke_time), "the hit wakes and provokes the grunt")
+	var de := _events_of(w, "deaggro", 1.0, cmd())
+	check(hit.state == &"chase" and hit.pos.y > -16.0, "provoked at 26: keeps chasing (z=%.1f)" % hit.pos.y)
+	var quiet_let_go := false
+	for ev in de:
+		if ev.id == quiet.id:
+			quiet_let_go = true
+	check(quiet_let_go and quiet.state != &"chase", "the unprovoked packmate lets go")
+	# Re-armed on every hit: a second hit at 3.5 s pushes the window past 4 s.
+	run(w, 2.5, cmd())
+	w.damage(hit.id, 1.0)
+	run(w, 1.0, cmd())
+	check(hit.state == &"chase" and hit.provoked_t > 2.5, "a new hit re-arms the window (%.1f s left)" % hit.provoked_t)
+	# Without further hits the leash applies again once provoke_time runs out, if still too far.
+	var w2 := SimWorld.new(1)
+	w2.tuning.grunt_aggro = 14.0
+	w2.tuning.grunt_speed = 0.1   # so it is still far away when the window closes
+	var p2 := w2.spawn(&"player", Vector2(0, 9))
+	var g2 := _idle_grunt(w2, Vector2(0, -17))
+	w2.damage(g2.id, 1.0)
+	var de2 := _events_of(w2, "deaggro", w2.tuning.provoke_time + 0.1, cmd())
+	check(de2.size() == 1 and g2.state == &"return" and g2.pos.distance_to(p2.pos) > 25.2, "leash resumes after provoke_time without a new hit")

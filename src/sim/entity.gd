@@ -19,6 +19,7 @@ var state_t: float = 0.0          # seconds left in the current timed state
 var attack_cd: float = 0.0
 var spawn_pos: Vector2 = Vector2.ZERO
 var aggro_delay: float = 0.0      # > 0: woken by a packmate, will chase when it hits 0
+var provoked_t: float = 0.0       # > 0: recently hit, ignores the leash
 var pack: int = -1                # wave pack index, -1 for hand-placed grunts
 
 func _init(p_id: int, p_kind: StringName, p_pos: Vector2) -> void:
