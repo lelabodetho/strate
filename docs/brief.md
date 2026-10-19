@@ -285,7 +285,7 @@ Retenir pour le système de loot (jalon 4) : l'empilement linéaire (+30 % × n)
 - [x] **Mode par défaut : `mix`**. Les entités de gameplay sont toujours en `pixel`. `dither` pur gardé comme variante pour les strates profondes.
 - [x] **Langage visuel posé** : orange = joueur et ce qui est à lui ; **rouge franc = menace** (`DANGER`, hors rampe accent) ; gris acier = monde. La rareté du loot aura ses propres couleurs.
 
-À faire au calme : `.gdignore` sur `tools/out/` et déplacer `tuning.json` dans `tools/presets/`. Les entités ne projettent pas d'ombre sur le sol du monde (mondes séparés) — acceptable.
+Fait le 19/10 : `.gdignore` sur `tools/out/`, la référence est `tools/presets/default.json` (preset F). Les entités ne projettent pas d'ombre sur le sol du monde (mondes séparés) — acceptable.
 
 ### Jalon 3 — Le viewer d'assets
 

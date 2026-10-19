@@ -1,7 +1,8 @@
 class_name SimTuning
 extends RefCounted
 ## Every gameplay number in one place. SimWorld reads these; nothing else owns them.
-## Reference values live in tools/out/tuning.json (saved from the in-game panel), not here.
+## Reference values live in tools/presets/default.json (saved from the in-game panel), not
+## here: the defaults below are the fixture tools/sim_test.gd runs against, and stay as they are.
 
 # [key, min, max, step] — drives the tuning panel sliders and validates loaded files.
 const SPECS := [

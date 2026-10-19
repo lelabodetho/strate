@@ -6,9 +6,9 @@
 # Exports
 /export/
 
-# Harness output (except the reference tuning values)
+# Harness output (captures); the .gdignore keeps the editor from importing them
 /tools/out/*
-!/tools/out/tuning.json
+!/tools/out/.gdignore
 
 # OS
 .DS_Store

@@ -1,7 +1,7 @@
 class_name TuningPanel
 extends CanvasLayer
 ## Dev dial: one slider per SimTuning value, live. Tab toggles. Save/Load go through GameState
-## to tools/out/tuning.json; the panel never touches the sim directly.
+## to tools/presets/default.json; the panel never touches the sim directly.
 
 const PANEL_W := 420
 const ROW_LABEL_W := 150
@@ -288,7 +288,7 @@ func _on_preset_selected(index: int) -> void:
 	var name := _presets.get_item_text(index)
 	if GameState.apply_preset(name):
 		refresh()
-		_status.text = "preset " + name + " appliqué (tuning.json intact)"
+		_status.text = "preset " + name + " appliqué (default.json intact)"
 	else:
 		_status.text = "preset introuvable: " + name
 

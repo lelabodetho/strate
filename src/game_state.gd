@@ -24,7 +24,7 @@ extends Node
 ##   --dither=<f>          render_test only: dither strength 0..1
 ##   --preset=<name>       apply tools/presets/<name>.json at start
 
-const TUNING_PATH := "res://tools/out/tuning.json"
+const TUNING_PATH := "res://tools/presets/default.json"   # the game's reference values
 const PRESET_DIR := "res://tools/presets"
 
 var world: SimWorld
@@ -64,7 +64,7 @@ func _ready() -> void:
 		look.apply({"mode": String(_args["mode"])})
 	if _args.has("dither"):
 		look.apply({"dither": float(_args["dither"])})
-	# Reference gameplay values live in tools/out/tuning.json; defaults otherwise.
+	# Reference gameplay values live in tools/presets/default.json; code defaults otherwise.
 	world = SimWorld.new(seed, null, SimTuning.load_file(TUNING_PATH))
 	if _args.has("preset"):
 		apply_preset(String(_args["preset"]))
@@ -151,7 +151,10 @@ func set_tuning(key: String, value: float) -> void:
 	preset_dirty = true
 
 func save_tuning() -> bool:
-	return world.tuning.save_file(TUNING_PATH)
+	var ok := world.tuning.save_file(TUNING_PATH)
+	if ok and preset_name.is_empty():
+		preset_dirty = false
+	return ok
 
 func load_tuning() -> void:
 	world.tuning = SimTuning.load_file(TUNING_PATH)
@@ -159,14 +162,14 @@ func load_tuning() -> void:
 	preset_dirty = false
 
 # Presets: named tuning files in tools/presets/. Applying one changes the live tuning only;
-# tools/out/tuning.json is untouched until Save.
+# default.json is untouched until Save.
 func list_presets() -> PackedStringArray:
 	var out := PackedStringArray()
 	var dir := DirAccess.open(PRESET_DIR)
 	if dir == null:
 		return out
 	for f in dir.get_files():
-		if f.ends_with(".json"):
+		if f.ends_with(".json") and not f.begins_with("look_") and f != "default.json":
 			out.append(f.trim_suffix(".json"))
 	out.sort()
 	return out
@@ -197,11 +200,11 @@ func save_preset(name: String) -> bool:
 	preset_dirty = false
 	return true
 
-## "name", "name*" when modified since applied, "" when no preset is active.
+## "name", "name*" when modified since applied; "default" (the loaded default.json) when no
+## preset was applied.
 func preset_label() -> String:
-	if preset_name.is_empty():
-		return ""
-	return preset_name + ("*" if preset_dirty else "")
+	var base := preset_name if not preset_name.is_empty() else "default"
+	return base + ("*" if preset_dirty else "")
 
 func set_weapon(name: String) -> void:
 	world.set_weapon(name)

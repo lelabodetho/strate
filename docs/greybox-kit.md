@@ -9,7 +9,7 @@ Principe : le feel d'un jeu vit dans les nombres (vitesses, timings, distances, 
 | Couche | Fichiers | Rôle | Réutilisable tel quel ? |
 |---|---|---|---|
 | **Simulation pure** | `src/sim/world.gd`, `entity.gd`, `command.gd`, `level.gd`, `projectile.gd`, `weapon_profile.gd`, `stats.gd`, `item.gd` | L'état du jeu et sa règle d'évolution `step(dt, cmd)`. Aucune dépendance à Node, Input ou Rendering. Déterministe à seed et commandes égales. Émet des `events` par tick. | Le **pattern** oui (RefCounted, step, events, IDs, seed). Le contenu (grunts, projectiles) est spécifique à Strate. |
-| **Tuning** | `src/sim/tuning.gd`, `tools/presets/*.json`, `tools/out/tuning.json` | Toutes les constantes de gameplay dans un objet avec une table de specs (min, max, pas). Presets nommés, fichier de référence chargé au démarrage. | Oui. On change la liste des specs. |
+| **Tuning** | `src/sim/tuning.gd`, `tools/presets/*.json`, `tools/presets/default.json` | Toutes les constantes de gameplay dans un objet avec une table de specs (min, max, pas). Presets nommés, fichier de référence chargé au démarrage. | Oui. On change la liste des specs. |
 | **Input → Command** | `src/input/player_input.gd` | Transforme Input en un `Command` par tick. Jamais d'action directe sur le monde. C'est ce qui rend la sim testable sans fenêtre et prête pour le réseau. | Oui. |
 | **View** | `src/view/world_view.gd`, `entity_view.gd`, `level_view.gd` | Lit l'état et les events, affiche. N'écrit jamais dans la sim. Cubes, couleurs plates, flashs sur events. | Le pattern oui ; les primitives sont génériques. |
 | **GameState (autoload)** | `src/game_state.gd` | Tient la sim, la fait avancer, pause, restart, vagues. Sert le harnais via flags CLI. | Oui, quasi tel quel. |
@@ -36,7 +36,7 @@ Verdict en 30 secondes de jeu ou on jette : si ce n'est pas fun avec des cubes, 
 - Sim sans Node. Si un fichier de `src/sim/` importe Input, Mesh ou get_tree, c'est une faute.
 - Tout passe par `Command`. Pas d'input qui touche le monde.
 - Les multiplicateurs (profils, items, buffs) s'appliquent sur les valeurs du tuning, via `SimStats` : `tuning × Π mult × (1 + Σ pct) + Σ flat`. Les profils d'arme sont des `mult` (source `weapon`), les items des `pct` additifs (source = id de l'item). Le monde ne lit jamais le tuning directement pour le joueur.
-- Les valeurs de référence vivent dans `tools/out/tuning.json`, jamais en dur dans le code.
+- Les valeurs de référence vivent dans `tools/presets/default.json`, jamais en dur dans le code ; les défauts de `SimTuning` sont la fixture des tests.
 - Une feature n'est terminée qu'avec sa capture et ses tests headless.
 - Le view consomme les events une fois par tick de sim, jamais par frame.
 
