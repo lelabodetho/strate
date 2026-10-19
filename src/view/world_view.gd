@@ -1,7 +1,7 @@
 class_name WorldView
 extends Node3D
-## Owns one EntityView per sim entity, one small mesh per projectile, and short-lived
-## feedback spawned from sim events. Reads only.
+## Owns one EntityView per sim entity, one ItemView per floor item, one small mesh per
+## projectile, and short-lived feedback spawned from sim events. Reads only.
 
 const PROJ_COLOR := Color(1.0, 0.8, 0.45)
 const IMPACT_COLOR := Color(1.0, 0.85, 0.6, 0.9)
@@ -20,6 +20,7 @@ var debug: bool = false:
 
 var _views: Dictionary = {}       # id -> EntityView
 var _proj_views: Dictionary = {}  # id -> MeshInstance3D
+var _item_views: Dictionary = {}  # id -> ItemView
 var _proj_mesh: SphereMesh
 var _proj_mat: StandardMaterial3D
 var _impact_mesh: CylinderMesh
@@ -73,10 +74,27 @@ func sync(world: SimWorld) -> void:
 			_proj_views[id].queue_free()
 			_proj_views.erase(id)
 
+	for it in world.items.values():
+		var iv: ItemView = _item_views.get(it.id)
+		if iv == null:
+			iv = ItemView.new()
+			iv.setup(it)
+			add_child(iv)
+			_item_views[it.id] = iv
+		iv.sync(it)
+
 	if world.tick != _last_event_tick:
 		_last_event_tick = world.tick
 		for ev in world.events:
 			_on_event(ev, world)
+
+	# A picked-up item plays its exit and frees itself; anything else gone from the sim goes now.
+	for id in _item_views.keys():
+		var iv: ItemView = _item_views[id]
+		if not world.items.has(id):
+			if not iv.leaving:
+				iv.queue_free()
+			_item_views.erase(id)
 
 func _on_event(ev: Dictionary, world: SimWorld) -> void:
 	match ev.type:
@@ -102,6 +120,13 @@ func _on_event(ev: Dictionary, world: SimWorld) -> void:
 			_spawn_swing(ev.pos, ev.dir, world.weapon)
 		"explosion":
 			_spawn_explosion(ev.pos, ev.radius)
+		"pickup":
+			var iv: ItemView = _item_views.get(ev.id)
+			if iv != null:
+				iv.pickup()
+			var pv: EntityView = _views.get(world.player_id)
+			if pv != null:
+				pv.flash(ItemView.ITEM_COLOR, EntityView.AGGRO_FLASH_TIME)
 
 func _spawn_impact(pos: Vector2) -> void:
 	var m := MeshInstance3D.new()

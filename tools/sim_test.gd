@@ -29,6 +29,10 @@ func _init() -> void:
 	test_leash()
 	test_wave_packs()
 	test_provoke()
+	test_stats_mods()
+	test_item_drop()
+	test_item_pickup()
+	test_items_persist()
 	print("[sim_test] ", "OK" if failures == 0 else "FAILED (%d)" % failures)
 	quit(1 if failures > 0 else 0)
 
@@ -318,7 +322,7 @@ func test_technomancer_blast() -> void:
 	check(explosions.size() == 1 and is_equal_approx(explosions[0].radius, 1.4), "one explosion at end of life (%d)" % explosions.size())
 	check(inside.hp < inside.hp_max, "explosion hits at 1.3 (hp=%.1f)" % inside.hp)
 	check(outside.hp == outside.hp_max, "explosion misses at 1.5")
-	check(is_equal_approx(w.tuning.fire_interval * w.weapon.fire_interval_mult, 0.8), "technomancer cadence is 0.8 s with the default tuning")
+	check(is_equal_approx(w.fire_interval(), 0.8), "technomancer cadence is 0.8 s with the default tuning")
 	# Center damage: a grunt right under the burst takes 2x.
 	var w2 := SimWorld.new(1)
 	w2.spawn(&"player", Vector2(0, 9))
@@ -560,3 +564,129 @@ func test_provoke() -> void:
 	w2.damage(g2.id, 1.0)
 	var de2 := _events_of(w2, "deaggro", w2.tuning.provoke_time + 0.1, cmd())
 	check(de2.size() == 1 and g2.state == &"return" and g2.pos.distance_to(p2.pos) > 25.2, "leash resumes after provoke_time without a new hit")
+
+func test_stats_mods() -> void:
+	var w := SimWorld.new(1)
+	w.tuning.fire_interval = 0.15
+	var st := w.player_stats
+	check(is_equal_approx(st.value("fire_rate"), 1.0 / 0.15) and is_equal_approx(w.fire_interval(), 0.15),
+		"0 mods: fire_rate is 1 / fire_interval (%.2f/s)" % st.value("fire_rate"))
+	check(is_equal_approx(st.value("player_speed"), w.tuning.player_speed) and is_equal_approx(st.value("proj_damage"), w.tuning.proj_damage),
+		"0 mods: every stat reads the tuning")
+	st.add(7, "fire_rate", 0.30)
+	check(is_equal_approx(st.value("fire_rate"), 1.0 / 0.15 * 1.3), "1 mod: +30 %% fire_rate (%.2f/s)" % st.value("fire_rate"))
+	check(is_equal_approx(w.fire_interval(), 0.15 / 1.3) and w.fire_interval() < 0.15, "+30 %% fire_rate shortens the interval to %.4f s" % w.fire_interval())
+	st.add(8, "fire_rate", 0.30)
+	check(is_equal_approx(st.value("fire_rate"), 1.0 / 0.15 * 1.6), "2 mods: pct adds up to +60 %% (%.2f/s)" % st.value("fire_rate"))
+	st.add(9, "proj_damage", 0.0, 5.0)
+	check(is_equal_approx(st.value("proj_damage"), w.tuning.proj_damage + 5.0), "flat mod adds after the pct")
+	st.add(10, "proj_damage", 0.5, 0.0)
+	check(is_equal_approx(st.value("proj_damage"), w.tuning.proj_damage * 1.5 + 5.0), "tuning × (1 + Σ pct) + Σ flat")
+	st.remove_source(7)
+	check(is_equal_approx(st.value("fire_rate"), 1.0 / 0.15 * 1.3), "removing a source drops its mod")
+	w.tuning.fire_interval = 0.3
+	check(is_equal_approx(st.value("fire_rate"), 1.0 / 0.3 * 1.3), "stats follow the live tuning")
+	# The weapon profile is a modifier too: brute is 0.5 s at the default 0.15, and an item's
+	# +30 % reads +30 % on top of it (0.5 / 1.3), not +30 % of the hunter's rate.
+	var w2 := SimWorld.new(1)
+	w2.set_weapon("brute")
+	check(is_equal_approx(w2.fire_interval(), 0.5) and w2.player_stats.has_source("weapon"), "brute: weapon mods give 0.5 s (%.3f)" % w2.fire_interval())
+	w2.player_stats.add(1, "fire_rate", 0.30)
+	check(is_equal_approx(w2.fire_interval(), 0.5 / 1.3), "brute + servo: 0.5 / 1.3 s (%.3f)" % w2.fire_interval())
+	w2.set_weapon("hunter")
+	check(is_equal_approx(w2.fire_interval(), 0.15 / 1.3), "switching weapons keeps the item mods (%.3f)" % w2.fire_interval())
+	# In play: shots per second go up by 30 %.
+	var w3 := SimWorld.new(1)
+	w3.spawn(&"player", Vector2(0, 9))
+	run(w3, 3.0, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	var base_shots: int = w3.stats.shots
+	var w4 := SimWorld.new(1)
+	w4.spawn(&"player", Vector2(0, 9))
+	w4.player_stats.add(1, "fire_rate", 0.30)
+	run(w4, 3.0, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	# Ticks quantize the interval (9 ticks → 7 ticks at 60 Hz), so the ratio is 1.29–1.44.
+	var ratio := float(w4.stats.shots) / float(base_shots)
+	check(w4.stats.shots > base_shots and ratio > 1.25 and ratio < 1.5,
+		"in play: %d shots in 3 s instead of %d" % [w4.stats.shots, base_shots])
+
+func _kill_grunts(w: SimWorld, n: int) -> void:
+	for i in n:
+		var g := w.spawn(&"grunt", Vector2(-6 + i * 0.5, -20))
+		g.state = &"chase"
+		w.damage(g.id, g.hp_max, Vector2.ZERO, 0.0)
+
+func test_item_drop() -> void:
+	var w := SimWorld.new(3)
+	w.spawn(&"player", Vector2(0, 9))
+	w.tuning.item_drop_chance = 1.0
+	var g := w.spawn(&"grunt", Vector2(2, -20))
+	w.damage(g.id, g.hp_max, Vector2.ZERO, 0.0)
+	var drops := w.events.filter(func(ev): return ev.type == "drop")
+	check(w.items.size() == 1 and drops.size() == 1 and w.items.values()[0].pos == g.pos and w.items.values()[0].kind == "servo_trigger",
+		"chance 1: the dead grunt leaves a servo_trigger where it fell, with a drop event")
+	w.tuning.item_drop_chance = 0.0
+	_kill_grunts(w, 20)
+	check(w.items.size() == 1, "chance 0: nothing drops")
+	# Seeded: same seed, same drops; the default 20 % lands near 20 over 100 kills.
+	var a := SimWorld.new(11)
+	a.spawn(&"player", Vector2(0, 9))
+	_kill_grunts(a, 100)
+	var b := SimWorld.new(11)
+	b.spawn(&"player", Vector2(0, 9))
+	_kill_grunts(b, 100)
+	var c := SimWorld.new(12)
+	c.spawn(&"player", Vector2(0, 9))
+	_kill_grunts(c, 100)
+	check(a.items.size() > 0 and JSON.stringify(a.to_dict()["items"]) == JSON.stringify(b.to_dict()["items"]),
+		"same seed = same drops (%d of 100)" % a.items.size())
+	check(JSON.stringify(a.to_dict()["items"]) != JSON.stringify(c.to_dict()["items"]), "different seed = different drops (%d of 100)" % c.items.size())
+	check(a.items.size() >= 10 and a.items.size() <= 32, "drop rate near 20 %% (%d of 100)" % a.items.size())
+
+func test_item_pickup() -> void:
+	var w := SimWorld.new(1)
+	var p := w.spawn(&"player", Vector2(0, 9))
+	var it := w.drop_item("servo_trigger", Vector2(0, 6))
+	var reach := p.radius + SimWorld.PICKUP_REACH
+	var before := w.fire_interval()
+	# Standing just outside the reach: nothing.
+	p.pos = Vector2(0, 6 + reach + 0.05)
+	w.step(DT, cmd())
+	check(w.items.has(it.id) and w.picked_items.is_empty(), "no pickup at %.2f" % (reach + 0.05))
+	# Walking in: picked up, mod added under the item's id, event emitted.
+	var picked := false
+	for i in 30:
+		w.step(DT, cmd(Vector2(0, -1)))
+		for ev in w.events:
+			if ev.type == "pickup" and ev.id == it.id and ev.kind == "servo_trigger":
+				picked = true
+	check(picked and not w.items.has(it.id) and w.picked_items.size() == 1 and w.picked_items[0] == it,
+		"walking over the item picks it up and emits pickup")
+	check(w.player_stats.has_source(it.id) and is_equal_approx(w.fire_interval(), before / 1.3),
+		"the mod is on the player under source = item id (%.4f s)" % w.fire_interval())
+	var it2 := w.drop_item("servo_trigger", p.pos)
+	w.step(DT, cmd())
+	check(w.picked_items.size() == 2 and is_equal_approx(w.fire_interval(), before / 1.6), "two items: +60 %% (%.4f s)" % w.fire_interval())
+
+func test_items_persist() -> void:
+	var w := SimWorld.new(1)
+	w.begin()
+	var p := w.player()
+	var it := w.drop_item("servo_trigger", p.pos)
+	var it_floor := w.drop_item("servo_trigger", Vector2(0, -20))
+	w.step(DT, cmd())
+	var base := SimStats.new(w.tuning).fire_interval()
+	check(w.picked_items.size() == 1 and is_equal_approx(w.fire_interval(), base / 1.3), "carrying one servo trigger")
+	w.damage(p.id, p.hp_max + 1.0)
+	w.restart_wave()
+	check(w.picked_items.size() == 1 and w.player_stats.has_source(it.id) and is_equal_approx(w.fire_interval(), base / 1.3) and p.alive,
+		"R: the item stays on the player (%.4f s)" % w.fire_interval())
+	check(not w.items.has(it_floor.id), "R: the floor is cleared")
+	w.start_wave(3)
+	check(w.picked_items.size() == 1, "N: the item stays too")
+	w.reset_run()
+	check(w.picked_items.is_empty() and not w.player_stats.has_source(it.id) and is_equal_approx(w.fire_interval(), base) and w.wave == 1,
+		"0: back to wave 1 without the item (%.4f s)" % w.fire_interval())
+	check(w.player_stats.has_source("weapon") or w.weapon.name == "hunter", "0: the weapon profile is untouched")
+	w.set_weapon("brute")
+	w.reset_run()
+	check(w.weapon.name == "brute" and is_equal_approx(w.fire_interval(), base * 0.5 / 0.15), "0 keeps the weapon profile and its mods")

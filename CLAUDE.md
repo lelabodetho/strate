@@ -29,6 +29,9 @@ ZQSD (physical WASD) + visée souris. Dash avec i-frames. Tir par défaut ; mêl
 - Persistance par perso, pas par partie.
 Ces règles préparent la coop 1–4 (jalon 5) sans la coder maintenant.
 
+## Greybox kit
+Ce repo est un kit de greybox (sim pure + harnais + tuning + arène) dont Strate est le premier contenu. Description complète, boucle de session et procédure de réutilisation : `docs/greybox-kit.md`. Toute nouvelle feature passe par le kit : dans la sim, paramétrée dans le tuning, capturée par `tools/snap.sh`, vérifiée dans `tools/sim_test.gd`.
+
 ## Harnais de test
 - `scenes/test/harness.tscn` : scène de test nommée.
 - `GameState` (autoload) expose `to_dict()` et répond aux flags CLI `--screenshot=<path>` et `--state=<path>` puis quitte.

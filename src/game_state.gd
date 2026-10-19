@@ -15,6 +15,8 @@ extends Node
 ##   --dash=t1,t2,...      ticks on which dash is pressed
 ##   --restart=<frame>     call restart() on that capture frame (tests the death -> R flow)
 ##   --next=<frame>        call next_wave() on that capture frame
+##   --reset=<frame>       call reset_waves() on that capture frame
+##   --drop=x,z            put a servo_trigger on the floor at start (tests the pickup flow)
 ##   --weapon=<name>       hunter | brute | technomancer
 ##   --preset=<name>       apply tools/presets/<name>.json at start
 
@@ -36,6 +38,7 @@ var _frame: int = 0
 var _frozen: bool = false        # capture mode: the sim stops once the frame budget is spent
 var _restart_frame: int = -1
 var _next_frame: int = -1
+var _reset_frame: int = -1
 
 signal wave_cleared(wave: int)
 
@@ -50,6 +53,8 @@ func _ready() -> void:
 	if _args.has("weapon"):
 		world.set_weapon(String(_args["weapon"]))
 	world.begin()
+	if _args.has("drop"):
+		world.drop_item("servo_trigger", _vec_arg("drop", Vector2.ZERO))
 	if _args.has("screenshot") or _args.has("state"):
 		_frames_left = int(_args.get("frames", "30"))
 		_scripted = true
@@ -57,6 +62,7 @@ func _ready() -> void:
 			_dash_ticks.append(int(t))
 		_restart_frame = int(_args.get("restart", "-1"))
 		_next_frame = int(_args.get("next", "-1"))
+		_reset_frame = int(_args.get("reset", "-1"))
 
 func step(dt: float, cmd: Command) -> void:
 	if _frozen:
@@ -68,6 +74,8 @@ func step(dt: float, cmd: Command) -> void:
 			restart()
 		if _frame == _next_frame:
 			next_wave()
+		if _frame == _reset_frame:
+			reset_waves()
 	if not paused:
 		world.step(dt, cmd)
 		for ev in world.events:
@@ -104,10 +112,9 @@ func restart() -> void:
 func next_wave() -> void:
 	world.start_wave(world.wave + 1)
 
-## 0: back to wave 1 with a fresh player.
+## 0: back to wave 1 with a fresh player, items dropped. R keeps them.
 func reset_waves() -> void:
-	world.wave = 1
-	world.restart_wave()
+	world.reset_run()
 
 func has_arg(key: String) -> bool:
 	return _args.has(key)

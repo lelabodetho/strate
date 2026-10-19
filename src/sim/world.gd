@@ -17,11 +17,19 @@ const PACKS_MAX := 4
 const AGGRO_DELAY_MAX := 0.3   # seeded delay before a woken packmate starts chasing
 const RETURN_SPEED_MULT := 0.6 # walking-home speed, as a fraction of grunt_speed
 const HOME_EPSILON := 0.2
+const PICKUP_REACH := 0.4      # an item is taken when within player_radius + this
 
 var seed: int
 var level: SimLevel
-var tuning: SimTuning
+var tuning: SimTuning:
+	set(v):
+		tuning = v
+		if player_stats != null:
+			player_stats.tuning = v
 var weapon: WeaponProfile = WeaponProfile.hunter()
+# The player's effective numbers: tuning × weapon mods × item mods. Every player value the
+# world needs goes through player_stats.value(); the tuning is never read directly for it.
+var player_stats: SimStats
 var rng := RandomNumberGenerator.new()
 var tick: int = 0
 var time: float = 0.0
@@ -35,12 +43,15 @@ var swing_dir: Vector2 = Vector2.DOWN
 var wave: int = 0
 var next_wave_t: float = 0.0   # > 0 while counting down to the next wave
 var wave_packs: Array[Vector2] = []   # pack centers of the current wave
+var items: Dictionary = {}            # id -> SimItem, lying on the floor
+var picked_items: Array[SimItem] = [] # what the player carries, in pickup order
 
 # What happened during the last step(), for the view and the harness. Cleared every step.
 # {type:"hit", target, pos, dir, damage} {type:"kill", target, pos} {type:"dodge", pos}
 # {type:"shot", pos, dir} {type:"impact", pos} {type:"wave_cleared", wave}
 # {type:"swing", pos, dir} {type:"explosion", pos, radius} {type:"stagger", target}
-# {type:"aggro", id} {type:"deaggro", id}
+# {type:"aggro", id} {type:"deaggro", id} {type:"drop", id, kind, pos}
+# {type:"pickup", id, kind, pos, mods}
 var events: Array[Dictionary] = []
 
 # Dash state (player only for now)
@@ -57,6 +68,8 @@ func _init(p_seed: int = 0, p_level: SimLevel = null, p_tuning: SimTuning = null
 	rng.seed = p_seed
 	level = p_level if p_level != null else SimLevel.arena()
 	tuning = p_tuning if p_tuning != null else SimTuning.new()
+	player_stats = SimStats.new(tuning)
+	player_stats.add_all("weapon", weapon.mods)
 
 ## Spawn the player at the level's spawn point and start wave 1.
 func begin() -> void:
@@ -151,18 +164,27 @@ func restart_wave() -> void:
 	var p := player()
 	if p != null:
 		p.alive = true
-		p.hp_max = tuning.player_hp * weapon.hp_mult
+		p.hp_max = player_stats.value("player_hp")
 		p.hp = p.hp_max
 		p.pos = level.player_spawn
 		p.vel = Vector2.ZERO
 		p.facing = Vector2.DOWN
 		p.state = &"idle"
 	projectiles.clear()
+	items.clear()
 	dash_t = 0.0
 	dash_cd = 0.0
 	iframes_t = 0.0
 	fire_cd = 0.0
 	start_wave(maxi(1, wave))
+
+## Back to wave 1 with a fresh player: the items are dropped too. Only R keeps them.
+func reset_run() -> void:
+	for it in picked_items:
+		player_stats.remove_source(it.id)
+	picked_items.clear()
+	wave = 1
+	restart_wave()
 
 func grunts_alive() -> int:
 	var n := 0
@@ -176,10 +198,10 @@ func spawn(kind: StringName, pos: Vector2) -> SimEntity:
 	_next_id += 1
 	match kind:
 		&"player":
-			e.hp_max = tuning.player_hp * weapon.hp_mult
-			e.radius = tuning.player_radius
-			e.hit_radius = tuning.player_radius
 			player_id = e.id
+			e.hp_max = player_stats.value("player_hp")
+			e.radius = player_stats.value("player_radius")
+			e.hit_radius = e.radius
 		&"grunt":
 			e.hp_max = tuning.grunt_hp
 			e.radius = tuning.grunt_radius
@@ -192,17 +214,30 @@ func spawn(kind: StringName, pos: Vector2) -> SimEntity:
 func player() -> SimEntity:
 	return entities.get(player_id)
 
-## Switch the attack profile. Tuning is untouched; only the multipliers change.
+## Switch the attack profile. Tuning is untouched; only the "weapon" modifiers change.
 ## The player keeps the same health fraction under the new max.
 func set_weapon(n: String) -> void:
 	weapon = WeaponProfile.by_name(n)
+	player_stats.remove_source("weapon")
+	player_stats.add_all("weapon", weapon.mods)
 	fire_cd = 0.0
 	swing_t = 0.0
+	_refresh_body()
+
+## Body values derived from stats (max hp, radius) after the modifiers changed.
+func _refresh_body() -> void:
 	var p := player()
-	if p != null:
-		var frac := p.hp / p.hp_max if p.hp_max > 0.0 else 1.0
-		p.hp_max = tuning.player_hp * weapon.hp_mult
-		p.hp = p.hp_max * frac
+	if p == null:
+		return
+	var frac := p.hp / p.hp_max if p.hp_max > 0.0 else 1.0
+	p.hp_max = player_stats.value("player_hp")
+	p.hp = p.hp_max * frac
+	p.radius = player_stats.value("player_radius")
+	p.hit_radius = p.radius
+
+## Seconds between two player attacks, from the fire_rate stat.
+func fire_interval() -> float:
+	return player_stats.fire_interval()
 
 func step(dt: float, cmd: Command) -> void:
 	tick += 1
@@ -213,6 +248,7 @@ func step(dt: float, cmd: Command) -> void:
 		return
 	if p.alive:
 		_step_player(dt, p, cmd)
+		_pick_up(p)
 	for e in entities.values():
 		if e.kind == &"grunt" and e.alive:
 			_step_grunt(dt, e, p)
@@ -228,13 +264,13 @@ func _step_player(dt: float, p: SimEntity, cmd: Command) -> void:
 	iframes_t = maxf(0.0, iframes_t - dt)
 	if cmd.dash and dash_cd <= 0.0 and dash_t <= 0.0:
 		dash_dir = cmd.move.normalized() if cmd.move.length() > 0.1 else p.facing
-		dash_t = tuning.dash_time
-		dash_cd = tuning.dash_cooldown
-		iframes_t = tuning.dash_iframes
+		dash_t = player_stats.value("dash_time")
+		dash_cd = player_stats.value("dash_cooldown")
+		iframes_t = player_stats.value("dash_iframes")
 
 	if dash_t > 0.0:
 		dash_t -= dt
-		p.vel = dash_dir * tuning.dash_speed
+		p.vel = dash_dir * player_stats.value("dash_speed")
 	elif swing_t > 1e-6:
 		# Bounded so the lunge covers exactly `lunge` whatever the tick rounding; the epsilon
 		# keeps float residue from adding a tenth tick.
@@ -245,11 +281,11 @@ func _step_player(dt: float, p: SimEntity, cmd: Command) -> void:
 			swing_t = 0.0
 		p.vel = swing_dir * (weapon.lunge / weapon.swing_time) * (t / dt)
 		if weapon.attack_move:
-			p.vel += cmd.move * tuning.player_speed * tuning.attack_move_mult
+			p.vel += cmd.move * player_stats.value("player_speed") * player_stats.value("attack_move_mult")
 	else:
-		var speed := tuning.player_speed
+		var speed := player_stats.value("player_speed")
 		if weapon.attack_move and weapon.kind != &"cone" and fire_cd > 0.0:
-			speed *= tuning.attack_move_mult
+			speed *= player_stats.value("attack_move_mult")
 		p.vel = cmd.move * speed
 
 	p.pos = level.resolve_circle(p.pos + p.vel * dt, p.radius)
@@ -260,7 +296,7 @@ func _step_player(dt: float, p: SimEntity, cmd: Command) -> void:
 
 	fire_cd = maxf(0.0, fire_cd - dt)
 	if cmd.attack and fire_cd <= 0.0 and not is_dashing():
-		fire_cd = tuning.fire_interval * weapon.fire_interval_mult
+		fire_cd = fire_interval()
 		match weapon.kind:
 			&"cone":
 				_swing(p, p.facing)
@@ -268,14 +304,15 @@ func _step_player(dt: float, p: SimEntity, cmd: Command) -> void:
 				_fire(p, p.facing)
 
 func _fire(owner: SimEntity, dir: Vector2) -> void:
-	var start := owner.pos + dir * tuning.muzzle_offset
+	var start := owner.pos + dir * player_stats.value("muzzle_offset")
 	if level.is_blocked(start):
 		return
-	var b := SimProjectile.new(_next_id, owner, start, dir * tuning.proj_speed * weapon.proj_speed_mult)
+	var b := SimProjectile.new(_next_id, owner, start, dir * player_stats.value("proj_speed"))
 	_next_id += 1
-	b.radius = tuning.proj_radius * weapon.proj_radius_mult
-	b.damage = tuning.proj_damage * weapon.damage_mult
-	b.ttl = tuning.proj_ttl
+	b.radius = player_stats.value("proj_radius")
+	b.damage = player_stats.value("proj_damage")
+	b.knockback = player_stats.value("knockback")
+	b.ttl = player_stats.value("proj_ttl")
 	if weapon.kind == &"blast":
 		b.blast_radius = weapon.blast_radius
 	projectiles[b.id] = b
@@ -287,7 +324,7 @@ func _fire(owner: SimEntity, dir: Vector2) -> void:
 func _swing(owner: SimEntity, dir: Vector2) -> void:
 	swing_t = weapon.swing_time
 	swing_dir = dir
-	iframes_t = maxf(iframes_t, weapon.attack_iframes)
+	iframes_t = maxf(iframes_t, player_stats.value("attack_iframes"))
 	stats.shots += 1
 	_emit({"type": "swing", "pos": owner.pos, "dir": dir})
 	var cos_half := cos(deg_to_rad(weapon.cone_angle_deg * 0.5))
@@ -301,14 +338,14 @@ func _swing(owner: SimEntity, dir: Vector2) -> void:
 			continue
 		if to_e.dot(dir) / d < cos_half:
 			continue
-		damage(e.id, tuning.proj_damage * weapon.damage_mult, dir, weapon.knockback_mult)
+		damage(e.id, player_stats.value("proj_damage"), dir, player_stats.value("knockback"))
 		hit_any = true
 	if hit_any:
 		stats.shots_hit += 1
 
 ## Technomancer: damage everything within radius, full at the center, blast_edge_factor at the
 ## edge. A target hit directly by the projectile (direct_id) always takes the center damage.
-func _explode(center: Vector2, radius: float, center_damage: float, owner_id: int, owner_kind: StringName, direct_id: int = -1) -> void:
+func _explode(center: Vector2, radius: float, center_damage: float, kb: float, owner_id: int, owner_kind: StringName, direct_id: int = -1) -> void:
 	_emit({"type": "explosion", "pos": center, "radius": radius})
 	var hit_any := false
 	for e in entities.values():
@@ -319,7 +356,7 @@ func _explode(center: Vector2, radius: float, center_damage: float, owner_id: in
 			continue
 		var k := 1.0 if e.id == direct_id else lerpf(1.0, weapon.blast_edge_factor, d / radius)
 		var dir: Vector2 = (e.pos - center).normalized() if d > 0.0001 else Vector2.ZERO
-		damage(e.id, center_damage * k, dir)
+		damage(e.id, center_damage * k, dir, kb)
 		hit_any = true
 	if hit_any and owner_id == player_id:
 		stats.shots_hit += 1
@@ -332,14 +369,14 @@ func _step_projectiles(dt: float) -> void:
 		b.pos += b.vel * dt
 		if level.is_blocked(b.pos):
 			if b.blast_radius > 0.0:
-				_explode(prev, b.blast_radius, b.damage, b.owner_id, b.owner_kind)
+				_explode(prev, b.blast_radius, b.damage, b.knockback, b.owner_id, b.owner_kind)
 			else:
 				_emit({"type": "impact", "pos": b.pos})
 			dead.append(b.id)
 			continue
 		if b.ttl <= 0.0:
 			if b.blast_radius > 0.0:
-				_explode(b.pos, b.blast_radius, b.damage, b.owner_id, b.owner_kind)
+				_explode(b.pos, b.blast_radius, b.damage, b.knockback, b.owner_id, b.owner_kind)
 			dead.append(b.id)
 			continue
 		for e in entities.values():
@@ -348,9 +385,9 @@ func _step_projectiles(dt: float) -> void:
 			var r: float = e.hit_radius + b.radius
 			if e.pos.distance_squared_to(b.pos) <= r * r:
 				if b.blast_radius > 0.0:
-					_explode(b.pos, b.blast_radius, b.damage, b.owner_id, b.owner_kind, e.id)
+					_explode(b.pos, b.blast_radius, b.damage, b.knockback, b.owner_id, b.owner_kind, e.id)
 				else:
-					damage(e.id, b.damage, b.vel.normalized())
+					damage(e.id, b.damage, b.vel.normalized(), b.knockback)
 					if b.owner_id == player_id:
 						stats.shots_hit += 1
 				dead.append(b.id)
@@ -456,9 +493,9 @@ func _separate() -> void:
 				a.pos = level.resolve_circle(a.pos - push, a.radius)
 				b.pos = level.resolve_circle(b.pos + push, b.radius)
 
-## Apply damage to an entity, pushing it along `dir` by knockback * kb_mult. Returns true if it
-## landed (false if dead, missing, or invulnerable).
-func damage(id: int, amount: float, dir: Vector2 = Vector2.ZERO, kb_mult: float = 1.0) -> bool:
+## Apply damage to an entity, pushing it along `dir` by `kb` (tuning.knockback when negative).
+## Returns true if it landed (false if dead, missing, or invulnerable).
+func damage(id: int, amount: float, dir: Vector2 = Vector2.ZERO, kb: float = -1.0) -> bool:
 	var e: SimEntity = entities.get(id)
 	if e == null or not e.alive:
 		return false
@@ -467,7 +504,7 @@ func damage(id: int, amount: float, dir: Vector2 = Vector2.ZERO, kb_mult: float 
 		_emit({"type": "dodge", "pos": e.pos})
 		return false
 	if e.id == player_id:
-		amount *= weapon.damage_taken_mult
+		amount *= player_stats.value("damage_taken")
 	e.hp = maxf(0.0, e.hp - amount)
 	if e.kind == &"grunt":
 		e.provoked_t = tuning.provoke_time
@@ -481,7 +518,7 @@ func damage(id: int, amount: float, dir: Vector2 = Vector2.ZERO, kb_mult: float 
 		# Shooting a sleeping pack wakes the whole pack.
 		_wake(e)
 	if dir != Vector2.ZERO:
-		e.pos = level.resolve_circle(e.pos + dir * tuning.knockback * kb_mult, e.radius)
+		e.pos = level.resolve_circle(e.pos + dir * (kb if kb >= 0.0 else tuning.knockback), e.radius)
 	_emit({"type": "hit", "target": e.id, "pos": e.pos, "dir": dir, "damage": amount})
 	if e.id == player_id:
 		stats.hits_taken += 1
@@ -492,10 +529,36 @@ func damage(id: int, amount: float, dir: Vector2 = Vector2.ZERO, kb_mult: float 
 		if e.id != player_id:
 			stats.kills += 1
 		_emit({"type": "kill", "target": e.id, "pos": e.pos})
-		if e.kind == &"grunt" and wave > 0 and grunts_alive() == 0:
-			_emit({"type": "wave_cleared", "wave": wave})
-			next_wave_t = WAVE_DELAY
+		if e.kind == &"grunt":
+			# Always draw, so the drop chance never changes what the rng hands out next.
+			if rng.randf() < tuning.item_drop_chance:
+				drop_item("servo_trigger", e.pos)
+			if wave > 0 and grunts_alive() == 0:
+				_emit({"type": "wave_cleared", "wave": wave})
+				next_wave_t = WAVE_DELAY
 	return true
+
+## Put an item on the floor.
+func drop_item(kind: String, pos: Vector2) -> SimItem:
+	var it := SimItem.new(_next_id, kind, pos)
+	_next_id += 1
+	items[it.id] = it
+	_emit({"type": "drop", "id": it.id, "kind": it.kind, "pos": it.pos})
+	return it
+
+## Items within reach join the player's modifiers under their own id as source. No stacking
+## limit: two servo triggers are +60 %.
+func _pick_up(p: SimEntity) -> void:
+	var reach := p.radius + PICKUP_REACH
+	for id in items.keys():
+		var it: SimItem = items[id]
+		if it.pos.distance_squared_to(p.pos) > reach * reach:
+			continue
+		items.erase(id)
+		picked_items.append(it)
+		player_stats.add_all(it.id, it.mods)
+		_refresh_body()
+		_emit({"type": "pickup", "id": it.id, "kind": it.kind, "pos": it.pos, "mods": it.mods.duplicate(true)})
 
 func _emit(ev: Dictionary) -> void:
 	events.append(ev)
@@ -513,6 +576,12 @@ func to_dict() -> Dictionary:
 	var projs := []
 	for b in projectiles.values():
 		projs.append(b.to_dict())
+	var floor_items := []
+	for it in items.values():
+		floor_items.append(it.to_dict())
+	var carried := []
+	for it in picked_items:
+		carried.append(it.to_dict())
 	var evs := []
 	for ev in events:
 		var d := {}
@@ -526,6 +595,9 @@ func to_dict() -> Dictionary:
 		"wave": wave, "grunts_alive": grunts_alive(), "next_wave_in": snappedf(next_wave_t, 0.01),
 		"wave_packs": wave_packs.map(func(c: Vector2): return [snappedf(c.x, 0.01), snappedf(c.y, 0.01)]),
 		"weapon": weapon.name,
+		"player_stats": player_stats.to_dict(),
+		"items": floor_items,
+		"picked_items": carried,
 		"stats": stats,
 		"tuning": tuning.to_dict(),
 		"level": level.to_dict(),

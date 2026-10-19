@@ -1,24 +1,16 @@
 class_name WeaponProfile
 extends RefCounted
 ## How the player's attack button turns into damage. Not a class: a profile the player can
-## switch at any time (keys 1/2/3). Every number is a multiplier on the current SimTuning, so
-## tuning presets stay comparable across profiles. Geometry (cone, blast) is absolute.
+## switch at any time (keys 1/2/3). Its numbers are SimStats modifiers (source "weapon") with
+## `mult` on the current tuning, so tuning presets stay comparable across profiles and item
+## bonuses (pct) read the same on every profile. Geometry (cone, blast) is absolute.
 
 const NAMES := ["hunter", "brute", "technomancer"]
 
 var name: String = "hunter"
 var kind: StringName = &"projectile"   # &"projectile" | &"cone" | &"blast"
-var damage_mult := 1.0
-var knockback_mult := 1.0
-var fire_interval_mult := 1.0
-var proj_speed_mult := 1.0
-var proj_radius_mult := 1.0
 var attack_move := true        # tuning.attack_move_mult applies while attacking
-
-# body: applied on tuning.player_hp and on every hit the player takes
-var hp_mult := 1.0
-var damage_taken_mult := 1.0
-var attack_iframes := 0.0      # i-frames granted when the attack starts (seconds)
+var mods: Array = []           # [{stat, mult}|{stat, flat}] applied to the player under source "weapon"
 
 # cone (brute)
 var cone_angle_deg := 90.0
@@ -34,33 +26,37 @@ static func hunter() -> WeaponProfile:
 	return WeaponProfile.new()
 
 ## No projectile: a 90-degree sweep in front of the player, 2.5x damage, 0.5 s cadence,
-## double knockback, and a short lunge along the aim.
+## double knockback, a short lunge along the aim, a thicker body with i-frames on the swing.
 static func brute() -> WeaponProfile:
 	var w := WeaponProfile.new()
 	w.name = "brute"
 	w.kind = &"cone"
-	w.damage_mult = 2.5
-	w.knockback_mult = 2.0
-	w.fire_interval_mult = 0.5 / 0.15   # 0.5 s with the default 0.15 s
-	w.hp_mult = 1.6
-	w.damage_taken_mult = 0.65
-	w.attack_iframes = 0.12
+	w.mods = [
+		{"stat": "proj_damage", "mult": 2.5},
+		{"stat": "knockback", "mult": 2.0},
+		{"stat": "fire_rate", "mult": 0.15 / 0.5},   # 0.5 s with the default 0.15 s
+		{"stat": "player_hp", "mult": 1.6},
+		{"stat": "damage_taken", "mult": 0.65},
+		{"stat": "attack_iframes", "flat": 0.12},
+	]
 	return w
 
 ## Slow, fat projectile that bursts on contact or at end of life: 2x damage at the center,
-## falling off toward a 1.4-unit edge, 0.8 s cadence. Moves freely while firing.
+## falling off toward a 1.4-unit edge, 0.8 s cadence. Moves freely while firing. Frail.
 static func technomancer() -> WeaponProfile:
 	var w := WeaponProfile.new()
 	w.name = "technomancer"
 	w.kind = &"blast"
-	w.damage_mult = 2.0
-	w.fire_interval_mult = 0.8 / 0.15   # 0.8 s with the default 0.15 s
 	w.blast_radius = 1.4
 	w.attack_move = false
-	w.proj_speed_mult = 8.0 / 20.0      # 8 with the default 20
-	w.proj_radius_mult = 0.35 / 0.25    # 0.35 with the default 0.25
-	w.hp_mult = 0.85
-	w.damage_taken_mult = 1.1
+	w.mods = [
+		{"stat": "proj_damage", "mult": 2.0},
+		{"stat": "fire_rate", "mult": 0.15 / 0.8},   # 0.8 s with the default 0.15 s
+		{"stat": "proj_speed", "mult": 8.0 / 20.0},  # 8 with the default 20
+		{"stat": "proj_radius", "mult": 0.35 / 0.25},  # 0.35 with the default 0.25
+		{"stat": "player_hp", "mult": 0.85},
+		{"stat": "damage_taken", "mult": 1.1},
+	]
 	return w
 
 static func by_name(n: String) -> WeaponProfile:

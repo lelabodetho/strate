@@ -33,6 +33,7 @@ const SPECS := [
 	["aggro_share_radius", 0.0, 10.0, 0.5],
 	["aggro_drop_mult", 1.0, 4.0, 0.1],
 	["provoke_time", 0.0, 15.0, 0.5],
+	["item_drop_chance", 0.0, 1.0, 0.05],
 ]
 
 # Player
@@ -68,6 +69,9 @@ var grunt_aggro := 30.0
 var aggro_share_radius := 4.0  # a waking grunt wakes idle grunts within this distance
 var aggro_drop_mult := 1.8     # a chasing grunt farther than grunt_aggro * this gives up and walks home
 var provoke_time := 4.0        # a hit grunt ignores the leash for this long, re-armed on every hit
+
+# Loot
+var item_drop_chance := 0.2    # chance a dying grunt leaves an item on the floor
 
 static func keys() -> PackedStringArray:
 	var out := PackedStringArray()

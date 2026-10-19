@@ -9,6 +9,7 @@ var pos: Vector2
 var vel: Vector2
 var radius: float = 0.25
 var damage: float = 10.0
+var knockback: float = 0.8   # displacement given to whoever it hits
 var ttl: float = 1.5
 var blast_radius: float = 0.0   # > 0: bursts on contact, wall or end of life instead of a direct hit
 
