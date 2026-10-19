@@ -22,6 +22,8 @@ const PLAYER_LIGHT_HEIGHT := 3.0
 @onready var occluder: LevelView = $EntityContainer/EntityVP/Occluder
 @onready var world_view: WorldView = $EntityContainer/EntityVP/WorldView
 @onready var player_lights: Array[OmniLight3D] = [$WorldContainer/WorldVP/PlayerLight, $EntityContainer/EntityVP/PlayerLight]
+@onready var cold_lights: Array[OmniLight3D] = [$WorldContainer/WorldVP/RoomLightA, $WorldContainer/WorldVP/RoomLightB,
+	$EntityContainer/EntityVP/RoomLightA, $EntityContainer/EntityVP/RoomLightB]
 @onready var input: PlayerInput = $PlayerInput
 @onready var tuning_panel: TuningPanel = $TuningPanel
 
@@ -35,7 +37,7 @@ func _ready() -> void:
 	world_view.sync(w)
 	cam.position = _cam_target()
 	_sync_cameras()
-	_apply_filter()
+	_apply_look()
 	GameState.capturing.connect(_dump_viewports)
 
 ## Capture mode: the raw low-res world and entity viewports, before the filter.
@@ -56,14 +58,26 @@ func _sync_cameras() -> void:
 	entity_cam.near = cam.near
 	entity_cam.far = cam.far
 
-func _apply_filter() -> void:
+## Push GameState.look onto the shaders, the viewports and the lights.
+func _apply_look() -> void:
+	var look: Look = GameState.look
 	var m := world_container.material as ShaderMaterial
-	m.set_shader_parameter("mode", GameState.RENDER_MODES.find(GameState.render_mode))
-	m.set_shader_parameter("dither_strength", GameState.render_dither)
+	m.set_shader_parameter("mode", look.mode_index())
+	m.set_shader_parameter("dither_strength", look.dither)
+	m.set_shader_parameter("scanlines", look.scanlines)
 	var e := entity_container.material as ShaderMaterial
 	e.set_shader_parameter("mode", 0)
+	e.set_shader_parameter("scanlines", look.scanlines)
 	e.set_shader_parameter("key_transparent", true)
 	e.set_shader_parameter("key_color", LevelView.KEY_COLOR)
+	for c in [world_container, entity_container]:
+		if c.stretch_shrink != look.viewport_scale:
+			c.stretch_shrink = look.viewport_scale
+	for l in player_lights:
+		l.light_color = look.player_light_color
+		l.light_energy = look.player_light_energy
+	for l in cold_lights:
+		l.light_energy = look.cold_light_energy
 
 func _process(dt: float) -> void:
 	cam.position = cam.position.lerp(_cam_target(), 1.0 - exp(-CAM_SMOOTH * dt))
@@ -72,7 +86,7 @@ func _process(dt: float) -> void:
 	if p != null:
 		for l in player_lights:
 			l.position = Vector3(p.pos.x, PLAYER_LIGHT_HEIGHT, p.pos.y)
-	_apply_filter()
+	_apply_look()
 
 func _physics_process(dt: float) -> void:
 	GameState.paused = tuning_panel.is_open()

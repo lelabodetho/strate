@@ -18,12 +18,12 @@ extends Node
 ##   --reset=<frame>       call reset_waves() on that capture frame
 ##   --drop=x,z            put a servo_trigger on the floor at start (tests the pickup flow)
 ##   --weapon=<name>       hunter | brute | technomancer
+##   --look=<name>         render_test only: load tools/presets/look_<name>.json (default: "default")
 ##   --mode=<name>         render_test only: pixel | dither | mix (tools/snap.sh picks that scene)
 ##   --dither=<f>          render_test only: dither strength 0..1
 ##   --preset=<name>       apply tools/presets/<name>.json at start
 
 const TUNING_PATH := "res://tools/out/tuning.json"
-const RENDER_MODES := ["pixel", "dither", "mix"]
 const PRESET_DIR := "res://tools/presets"
 
 var world: SimWorld
@@ -31,10 +31,10 @@ var debug: bool = false
 var paused: bool = false   # set by the scene while the tuning panel is open; the sim does not step
 var preset_name: String = ""   # last preset applied or saved; "" = none
 var preset_dirty: bool = false # a slider moved since the preset was applied
-# Render test settings (not sim tuning): the filter mode of the world layer and the dither
-# strength. The panel edits them, F cycles the mode, render_test.gd applies them.
-var render_mode: String = "mix"
-var render_dither: float = 0.5
+# Render test look (not sim tuning): filter, scanlines, viewport scale, lights. The panel
+# edits it, F cycles the mode, render_test.gd applies it every frame.
+var look := Look.new()
+var look_name: String = Look.DEFAULT_NAME
 var render_scene: bool = false   # set by render_test.gd so the HUD shows the mode
 var _args: Dictionary = {}
 var _frames_left: int = -1
@@ -57,10 +57,12 @@ func _ready() -> void:
 	_args = _parse_args()
 	var seed := int(_args.get("seed", "1"))
 	debug = _args.has("debug")
-	if _args.has("mode") and RENDER_MODES.has(String(_args["mode"])):
-		render_mode = String(_args["mode"])
+	look_name = String(_args.get("look", Look.DEFAULT_NAME))
+	look.load_file(Look.path(look_name))
+	if _args.has("mode"):
+		look.apply({"mode": String(_args["mode"])})
 	if _args.has("dither"):
-		render_dither = clampf(float(_args["dither"]), 0.0, 1.0)
+		look.apply({"dither": float(_args["dither"])})
 	# Reference gameplay values live in tools/out/tuning.json; defaults otherwise.
 	world = SimWorld.new(seed, null, SimTuning.load_file(TUNING_PATH))
 	if _args.has("preset"):
@@ -195,15 +197,22 @@ func preset_label() -> String:
 func set_weapon(name: String) -> void:
 	world.set_weapon(name)
 
-func set_render_mode(name: String) -> void:
-	if RENDER_MODES.has(name):
-		render_mode = name
-
 func cycle_render_mode() -> void:
-	render_mode = RENDER_MODES[(RENDER_MODES.find(render_mode) + 1) % RENDER_MODES.size()]
+	look.mode = Look.MODES[(look.mode_index() + 1) % Look.MODES.size()]
 
-func set_render_dither(v: float) -> void:
-	render_dither = clampf(v, 0.0, 1.0)
+func save_look(name: String) -> bool:
+	name = name.strip_edges().validate_filename()
+	if name.is_empty():
+		return false
+	look_name = name
+	return look.save_file(Look.path(name))
+
+func load_look(name: String) -> bool:
+	name = name.strip_edges().validate_filename()
+	if name.is_empty():
+		return false
+	look_name = name
+	return look.load_file(Look.path(name))
 
 func reset_tuning() -> void:
 	world.tuning = SimTuning.new()

@@ -2,11 +2,11 @@
 
 ## Où on en est (19/10/2026)
 
-**État** : jalons 0, 1, 2, 2b bouclés. Arène de vagues jouable avec hunter / brute / technomancer, tuning par presets, premier item qui se sent. 142 tests headless.
+**État** : jalons 0, 1, 2, 2b, 2c bouclés. Arène de vagues jouable, tuning par presets, premier item qui se sent, rendu `mix` avec langage visuel orange = joueur / rouge = menace. 142 tests headless.
 
-**Prochaine session : jalon 2c, le rendu.** Scène de test avec lampe, trois filtres en shader (pixel / dither / mix), gameplay toujours en pixel, monde en dither. Refs dans `docs/da/`.
+**Prochaine session : jalon 4, première brique.** Élites avec affixes d'abord (c'est elles qui donnent une raison au loot), puis système de loot (rareté, slots, affixes à +5/8/12 %).
 
-**Ensuite** : jalon 4 (élites avec affixes, paliers, boss, système de loot avec rareté / slots / rendements décroissants, éditeur de zone).
+**Ensuite** : reste du jalon 4 (élites avec affixes, paliers, boss, système de loot avec rareté / slots / rendements décroissants, éditeur de zone).
 
 **Comment on travaille** : une conversation par session. Ce brief est la source des décisions ; `CLAUDE.md` et `docs/` sont la source pour l'agent. Fin de session = brief à jour.
 
@@ -277,13 +277,15 @@ Critère de sortie : l'agent peut lancer le jeu, prendre une capture, lire l'ét
 
 Retenir pour le système de loot (jalon 4) : l'empilement linéaire (+30 % × n) ramène au twin-stick en quelques vagues → slots + rendements décroissants + affixes à +5/+8/+12 %. Additif entre affixes de même type, multiplicatif entre catégories.
 
-### Jalon 2c — Rendu
+### Jalon 2c — Rendu (bouclé le 19/10/2026)
 
-**DA tranchée (19/10) : low-poly flat-shaded comme source** (voir `docs/da/`), post-process par-dessus pour lumière, ombres et grain. Le personnage technomancien variante A fonctionne en silhouette dans les trois styles testés.
+**DA tranchée : low-poly flat-shaded comme source** (refs dans `docs/da/`), post-process par-dessus.
 
-- [ ] `scenes/test/render_test.tscn` : l'arène avec une lampe, trois filtres commutables en shader (pixel dense, dither bichrome gris + accent, mélange). Direction pressentie : **pixel dense pour le gameplay (persos, ennemis, projectiles, loot), dither pour le monde (murs, sol, fonds, écrans)**. Vérifier que le windup rouge et l'item au sol restent lisibles. Palettes de référence dans `tools/filters_preview.py`.
-- [ ] Faces internes visibles sur les murs translucides : résolu par le post-process ou un mesh unique.
-- [ ] Déploiement web (push GitHub + Pages).
+- [x] `scenes/test/render_test.tscn` : deux SubViewports à 1/2 résolution (monde / entités, mondes 3D séparés — Compatibility ne gère pas les masques de couche par caméra), shader `src/view/post_filter.gdshader` avec modes `pixel` / `dither` / `mix` (touche F, sélecteur et slider dither dans le panneau). Omni chaude qui suit le joueur, deux omnis froides fixes, ombres.
+- [x] **Mode par défaut : `mix`**. Les entités de gameplay sont toujours en `pixel`. `dither` pur gardé comme variante pour les strates profondes.
+- [x] **Langage visuel posé** : orange = joueur et ce qui est à lui ; **rouge franc = menace** (`DANGER`, hors rampe accent) ; gris acier = monde. La rareté du loot aura ses propres couleurs.
+
+À faire au calme : `.gdignore` sur `tools/out/` et déplacer `tuning.json` dans `tools/presets/`. Les entités ne projettent pas d'ombre sur le sol du monde (mondes séparés) — acceptable.
 
 ### Jalon 3 — Le viewer d'assets
 

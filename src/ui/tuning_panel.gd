@@ -16,8 +16,10 @@ var _preset_label: Label
 var _save_as_name: LineEdit
 var _weapons: OptionButton
 var _modes: OptionButton
-var _dither: HSlider
-var _dither_value: Label
+var _look_sliders: Dictionary = {}  # key -> HSlider
+var _look_values: Dictionary = {}   # key -> Label
+var _look_color: ColorPickerButton
+var _look_name: LineEdit
 
 func _ready() -> void:
 	layer = 10
@@ -89,37 +91,54 @@ func _ready() -> void:
 	_weapons.item_selected.connect(func(i: int): GameState.set_weapon(WeaponProfile.NAMES[i]))
 	weapon_row.add_child(_weapons)
 
-	# Render filter (render_test scene only; F cycles the mode). Not part of the sim tuning.
-	var render_row := HBoxContainer.new()
-	vbox.add_child(render_row)
-	var render_title := Label.new()
-	render_title.text = "rendu"
-	render_title.custom_minimum_size.x = 60
-	render_row.add_child(render_title)
+	# Look (render_test scene only; F cycles the mode). View-side settings, not sim tuning:
+	# filter mode, dither, scanlines, viewport scale, lights. Saved as tools/presets/look_<name>.json.
+	var look_title := Label.new()
+	look_title.text = "rendu"
+	vbox.add_child(look_title)
+	var mode_row := HBoxContainer.new()
+	vbox.add_child(mode_row)
+	var mode_title := Label.new()
+	mode_title.text = "mode [F]"
+	mode_title.custom_minimum_size.x = ROW_LABEL_W
+	mode_row.add_child(mode_title)
 	_modes = OptionButton.new()
-	_modes.custom_minimum_size.x = 100
+	_modes.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_modes.focus_mode = Control.FOCUS_NONE
-	for i in GameState.RENDER_MODES.size():
-		_modes.add_item(GameState.RENDER_MODES[i], i)
-	_modes.item_selected.connect(func(i: int): GameState.set_render_mode(GameState.RENDER_MODES[i]))
-	render_row.add_child(_modes)
-	var dither_title := Label.new()
-	dither_title.text = " dither"
-	render_row.add_child(dither_title)
-	_dither = HSlider.new()
-	_dither.min_value = 0.0
-	_dither.max_value = 1.0
-	_dither.step = 0.05
-	_dither.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_dither.focus_mode = Control.FOCUS_NONE
-	_dither.value_changed.connect(func(v: float):
-		GameState.set_render_dither(v)
-		_dither_value.text = _fmt(v))
-	render_row.add_child(_dither)
-	_dither_value = Label.new()
-	_dither_value.custom_minimum_size.x = 40
-	_dither_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	render_row.add_child(_dither_value)
+	for i in Look.MODES.size():
+		_modes.add_item(Look.MODES[i], i)
+	_modes.item_selected.connect(func(i: int): GameState.look.mode = Look.MODES[i])
+	mode_row.add_child(_modes)
+	_look_slider(vbox, "dither", "dither")
+	_look_slider(vbox, "scanlines", "scanlines")
+	_look_slider(vbox, "viewport_scale", "viewport 1/n")
+	var color_row := HBoxContainer.new()
+	vbox.add_child(color_row)
+	var color_title := Label.new()
+	color_title.text = "lampe joueur"
+	color_title.custom_minimum_size.x = ROW_LABEL_W
+	color_row.add_child(color_title)
+	_look_color = ColorPickerButton.new()
+	_look_color.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_look_color.focus_mode = Control.FOCUS_NONE
+	_look_color.edit_alpha = false
+	_look_color.color_changed.connect(func(c: Color): GameState.look.player_light_color = c)
+	color_row.add_child(_look_color)
+	_look_slider(vbox, "player_light_energy", "lampe joueur énergie")
+	_look_slider(vbox, "cold_light_energy", "lampes froides énergie")
+	var look_row3 := HBoxContainer.new()
+	vbox.add_child(look_row3)
+	_look_name = LineEdit.new()
+	_look_name.placeholder_text = "look_<nom>.json"
+	_look_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_look_name.text_submitted.connect(func(_t): _on_look_save())
+	look_row3.add_child(_look_name)
+	for b in [["Save look", _on_look_save], ["Load look", _on_look_load]]:
+		var btn := Button.new()
+		btn.text = b[0]
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.pressed.connect(b[1])
+		look_row3.add_child(btn)
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -194,10 +213,62 @@ func refresh() -> void:
 		if names[i] == GameState.preset_name:
 			_presets.select(i + 1)
 	_weapons.select(WeaponProfile.NAMES.find(GameState.world.weapon.name))
-	_modes.select(GameState.RENDER_MODES.find(GameState.render_mode))
-	_dither.set_value_no_signal(GameState.render_dither)
-	_dither_value.text = _fmt(GameState.render_dither)
+	_refresh_look()
 	_refresh_preset_label()
+
+## One row for a Look spec, laid out like the tuning rows: label, slider, value.
+func _look_slider(parent: Control, key: String, label: String) -> void:
+	var spec: Array = Look.SPECS.filter(func(x): return x[0] == key)[0]
+	var row := HBoxContainer.new()
+	parent.add_child(row)
+	var l := Label.new()
+	l.text = label
+	l.custom_minimum_size.x = ROW_LABEL_W
+	row.add_child(l)
+	var sl := HSlider.new()
+	sl.min_value = spec[1]
+	sl.max_value = spec[2]
+	sl.step = spec[3]
+	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sl.focus_mode = Control.FOCUS_NONE
+	sl.value_changed.connect(func(v: float):
+		GameState.look.apply({key: v})
+		_look_values[key].text = _fmt(v))
+	row.add_child(sl)
+	var v := Label.new()
+	v.custom_minimum_size.x = VALUE_W
+	v.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	row.add_child(v)
+	_look_sliders[key] = sl
+	_look_values[key] = v
+
+func _refresh_look() -> void:
+	var look: Look = GameState.look
+	_modes.select(look.mode_index())
+	for key in _look_sliders:
+		var v: float = float(look.get(key))
+		_look_sliders[key].set_value_no_signal(v)
+		_look_values[key].text = _fmt(v)
+	_look_color.color = look.player_light_color
+	if _look_name.text.is_empty():
+		_look_name.text = GameState.look_name
+
+func _on_look_save() -> void:
+	var name := _look_name.text.strip_edges()
+	if name.is_empty():
+		name = GameState.look_name
+	_status.text = ("look -> " if GameState.save_look(name) else "look save FAILED: ") + Look.path(name)
+	_look_name.text = GameState.look_name
+
+func _on_look_load() -> void:
+	var name := _look_name.text.strip_edges()
+	if name.is_empty():
+		name = GameState.look_name
+	if GameState.load_look(name):
+		_refresh_look()
+		_status.text = "look <- " + Look.path(name)
+	else:
+		_status.text = "look introuvable: " + Look.path(name)
 
 func _refresh_preset_label() -> void:
 	var l := GameState.preset_label()

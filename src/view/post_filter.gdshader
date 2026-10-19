@@ -5,12 +5,14 @@ shader_type canvas_item;
 //   mode 0 pixel   : nearest palette colour, accents (warm, saturated) on the accent ramp
 //   mode 1 dither  : three greys (dark / mid / light) through a Bayer 8x8 threshold, accent
 //                    dithered against dark so the volume stays
-//   mode 2 mix     : palette, Bayer jitter on the mid tones only, light scanlines
+//   mode 2 mix     : palette, Bayer jitter on the mid tones only
+// Scanlines (uniform) darken every third screen row in every mode; 0.5 is the preview's 0.86.
 // The entity layer uses mode 0 with key_transparent: pixels in the key colour (level geometry
 // drawn as occluder) and empty pixels become transparent so the world shows through.
 
 uniform int mode : hint_range(0, 2) = 0;
 uniform float dither_strength : hint_range(0.0, 1.0) = 0.5;
+uniform float scanlines : hint_range(0.0, 1.0) = 0.5;   // every third screen row darkened, 0 = off
 uniform bool key_transparent = false;
 uniform vec3 key_color : source_color = vec3(1.0, 0.0, 1.0);
 
@@ -104,11 +106,11 @@ void fragment() {
 		float amp = 0.18 * dither_strength;
 		vec3 jit = (l > 0.06 && l < 0.75) ? c + (b - 0.5) * amp : c;
 		outc = is_accent(c) ? nearest_acc(c) : nearest_steel(clamp(jit, 0.0, 1.0));
-		if ((int(FRAGCOORD.y) % 3) == 0) {
-			outc *= 0.86;
-		}
 	} else {
 		outc = is_accent(c) ? nearest_acc(c) : nearest_steel(c);
+	}
+	if ((int(FRAGCOORD.y) % 3) == 0) {
+		outc *= 1.0 - 0.28 * scanlines;
 	}
 	COLOR = empty ? vec4(0.0) : vec4(outc, key_transparent ? src.a : 1.0);
 }
