@@ -240,7 +240,7 @@ Conséquences :
 - [x] Repo, stack, un écran qui affiche un rectangle qui bouge.
 - [x] État du jeu exposé (autoload `GameState`) pour inspection.
 - [x] Une scène de test nommée (`scenes/test/harness.tscn`), un script qui charge + screenshot (`tools/snap.sh`).
-- [ ] Déploiement web automatique à chaque push.
+- [x] Déploiement web automatique à chaque push : preset d'export `Web` (`export_presets.cfg`) + workflow GitHub Actions qui exporte en headless et publie sur Pages. **Garé** le 19/10/2026 : pas de GitHub Pages pour l'instant, le fichier est gardé en `.github/workflows/deploy-web.yml.disabled`. Pour le rallumer : enlever `.disabled` et activer Pages (source « GitHub Actions ») sur le dépôt.
 
 **Contraintes d'architecture coop-ready (à poser dès maintenant, pas à implémenter)**
 - Simulation séparée du rendu : positions, dégâts, loot, état des monstres vivent dans une couche sans dépendance à l'affichage. Le rendu observe.
