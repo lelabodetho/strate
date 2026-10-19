@@ -2,11 +2,11 @@
 
 ## Où on en est (19/10/2026)
 
-**État** : jalons 0, 1, 2, 2b, 2c bouclés. Arène de vagues jouable, tuning par presets, premier item qui se sent, rendu `mix` avec langage visuel orange = joueur / rouge = menace. 142 tests headless.
+**État** : jalons 0, 1, 2, 2b, 2c bouclés, jalon 4 entamé (élites avec affixes, loot généré avec slots / rareté / paliers). Arène de vagues jouable au preset par défaut (`tools/presets/default.json`), rendu `mix` avec langage visuel orange = joueur / rouge = menace / couleur par rareté pour le loot. 214 tests headless.
 
-**Prochaine session : jalon 4, première brique.** Élites avec affixes d'abord (c'est elles qui donnent une raison au loot), puis système de loot (rareté, slots, affixes à +5/8/12 %).
+**Prochaine session : jouer.** Valider en jeu les deux briques du jalon 4 (listes « à valider » ci-dessous) avant d'empiler la suite.
 
-**Ensuite** : reste du jalon 4 (élites avec affixes, paliers, boss, système de loot avec rareté / slots / rendements décroissants, éditeur de zone).
+**Ensuite** : reste du jalon 4 (paliers de difficulté, boss, éditeur de zone).
 
 **Comment on travaille** : une conversation par session. Ce brief est la source des décisions ; `CLAUDE.md` et `docs/` sont la source pour l'agent. Fin de session = brief à jour.
 
@@ -307,6 +307,19 @@ Une élite est un grunt qui change la règle d'engagement. Règle posée : **cha
 - [x] 29 checks headless de plus (171 au total).
 
 À valider en jeu : la mèche de 0,6 s laisse-t-elle le temps de reculer sans dash ; le cône de 120° force-t-il vraiment le flanc avec une cadence de 0,45 s ; l'élite célère est-elle lisible quand elle sort d'un pack ; le blast dans le pack est-il un plaisir ou un piège (il tue les packmates mais aussi le joueur collé). Décider si l'élite doit passer devant son pack (aujourd'hui c'est le premier grunt placé, sans comportement de leader).
+
+### Jalon 4 — Loot (deuxième brique, bouclée le 19/10/2026)
+
+Un item doit changer un **breakpoint**, pas une moyenne : 22 dégâts contre 80 PV = 4 tirs, et seul un affixe dégâts T3 (+25 %) passe à 3 ; un T2 (+15 %) reste à 4. Tout le système est dimensionné sur cette règle.
+
+- [x] `SimItem` généré (`roll`, seedé) : slot **arme / armure / module**, rareté **série / modifié / relique** = 1 / 2 / 3 affixes distincts tirés dans le pool du slot, chaque affixe à un palier T1 / T2 / T3 (tiré 50 / 35 / 15 %) valant `affix_t1..t3` = +8 / +15 / +25 %. Les stats « moins c'est mieux » (recharge du dash, dégâts subis) sont tirées en négatif.
+- [x] Pools : arme = cadence, dégâts, recul, vitesse de tir ; armure = PV, dégâts subis, vitesse ; module = cadence, dégâts, recharge du dash, vitesse. Même stat sur deux slots = additif (arme T1 + module T1 cadence = +16 %) ; cadence × dégâts se multiplient dans le temps de kill.
+- [x] **Équipement par swap**, pas d'inventaire : marcher sur un item l'équipe, l'ancien du slot tombe aux pieds du joueur (même id, mêmes affixes) et reste inerte tant qu'on n'en est pas sorti. La décision se prend avant de poser le pied, grâce à la ligne « Au sol : … » du HUD (3 u). R garde l'équipement, 0 le lâche.
+- [x] Tables de drop dans le tuning : trash `item_drop_chance` 20 %, modifié à `drop_rare_chance` 20 % sinon série ; élite toujours, relique à `elite_drop_epic_chance` 30 % sinon modifié ; slot uniforme. Tous les tirages passent par le rng du monde et sont toujours tirés (l'item lui-même sur un sous-rng seedé par le monde) : activer ou couper le loot ne déplace aucun grunt.
+- [x] View : couleur par rareté — série blanc acier, modifié cyan froid (0.4, 0.8, 0.9), relique orange avec lampe plus forte et halo plus large. Jamais de rouge (réservé à la menace). HUD : une ligne par slot dans la couleur de la rareté (« Arme · modifié · cadence +15 % · dégâts +8 % »), « Arme · — » grisé quand vide. Harnais : `--drop=x,z[,rareté[,slot]]`, `--drop2=…`.
+- [x] 22 checks de plus (214 au total) : roll seedé, breakpoint 3 / 4 tirs, swap et empilement, tables de drop sur 200 trash et 50 élites, persistance R / N / 0.
+
+À valider en jeu : le swap sans confirmation — perd-on un bon item en marchant dessus par accident (si oui : ramassage sur touche, ou l'item ne s'équipe que s'il est meilleur) ; les +8 % se sentent-ils ou faut-il attendre un T2 ; la ligne « Au sol » suffit-elle pour lire un item à distance, ou faut-il un tooltip au-dessus de l'item ; la part de reliques (30 % par élite, une élite toutes les 2 vagues) est-elle assez rare pour compter ; recul et vitesse de tir sont-ils des affixes morts à côté de cadence et dégâts (si oui, leur donner un effet : perforation, portée) ; faut-il une rareté au-dessus de relique avant les boss ou plutôt un affixe à effet (jalon 4, suite).
 
 ### Jalon 4 — Contenu
 

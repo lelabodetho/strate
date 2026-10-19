@@ -37,6 +37,11 @@ const SPECS := [
 	["aggro_drop_mult", 1.0, 4.0, 0.1],
 	["provoke_time", 0.0, 15.0, 0.5],
 	["item_drop_chance", 0.0, 1.0, 0.05],
+	["drop_rare_chance", 0.0, 1.0, 0.05],
+	["elite_drop_epic_chance", 0.0, 1.0, 0.05],
+	["affix_t1", 0.01, 0.5, 0.01],
+	["affix_t2", 0.01, 0.5, 0.01],
+	["affix_t3", 0.01, 0.5, 0.01],
 	["wave_delay", 0.5, 15.0, 0.5],
 	["wave_cap", 3.0, 24.0, 1.0],
 	["pack_spacing", 0.0, 20.0, 1.0],
@@ -89,8 +94,15 @@ var aggro_share_radius := 4.0  # a waking grunt wakes idle grunts within this di
 var aggro_drop_mult := 1.8     # a chasing grunt farther than grunt_aggro * this gives up and walks home
 var provoke_time := 4.0        # a hit grunt ignores the leash for this long, re-armed on every hit
 
-# Loot
-var item_drop_chance := 0.2    # chance a dying grunt leaves an item on the floor
+# Loot: trash drops with item_drop_chance (rare with drop_rare_chance, common otherwise);
+# an elite always drops (epic with elite_drop_epic_chance, rare otherwise). Slot uniform.
+# Affix tiers are the breakpoint lever: 22 damage vs 80 hp is 4 shots, T3 makes it 3.
+var item_drop_chance := 0.2
+var drop_rare_chance := 0.2
+var elite_drop_epic_chance := 0.3
+var affix_t1 := 0.08
+var affix_t2 := 0.15
+var affix_t3 := 0.25
 
 # Wave pacing: the arena imitates the rhythm of a zone (packs spread out, one pull at a time,
 # a breath between pulls).

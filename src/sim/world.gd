@@ -49,14 +49,16 @@ var next_wave_t: float = 0.0   # > 0 while counting down to the next wave
 var wave_packs: Array[Vector2] = []   # pack centers of the current wave
 var wave_fallbacks: int = 0           # pack centers placed by the fallback this wave (constraints unmet)
 var items: Dictionary = {}            # id -> SimItem, lying on the floor
-var picked_items: Array[SimItem] = [] # what the player carries, in pickup order
+var equipped: Dictionary = {}         # slot (StringName) -> SimItem worn by the player
 
 # What happened during the last step(), for the view and the harness. Cleared every step.
 # {type:"hit", target, pos, dir, damage} {type:"kill", target, pos} {type:"dodge", pos}
 # {type:"shot", pos, dir} {type:"impact", pos} {type:"wave_cleared", wave}
 # {type:"swing", pos, dir} {type:"explosion", pos, radius} {type:"stagger", target}
-# {type:"aggro", id} {type:"deaggro", id} {type:"drop", id, kind, pos}
-# {type:"pickup", id, kind, pos, mods}
+# {type:"aggro", id} {type:"deaggro", id}
+# {type:"drop", id, slot, rarity, pos}  an item landed on the floor
+# {type:"equip", id, slot, replaced_id, pos}  the player walked over it; replaced_id (-1 if the
+#                                      slot was empty) now lies where the player stood
 # {type:"blocked", target, pos, dir}   shielded elite took a frontal hit
 # {type:"fuse", id, pos, radius, time} volatile elite died, blast in `time`
 # {type:"blast", pos, radius}          the corpse blew up
@@ -241,11 +243,11 @@ func restart_wave() -> void:
 	fire_cd = 0.0
 	start_wave(maxi(1, wave))
 
-## Back to wave 1 with a fresh player: the items are dropped too. Only R keeps them.
+## Back to wave 1 with a fresh player: the equipment is dropped too. Only R keeps it.
 func reset_run() -> void:
-	for it in picked_items:
+	for it in equipped.values():
 		player_stats.remove_source(it.id)
-	picked_items.clear()
+	equipped.clear()
 	wave = 1
 	restart_wave()
 
@@ -616,10 +618,7 @@ func damage(id: int, amount: float, dir: Vector2 = Vector2.ZERO, kb: float = -1.
 			if e.has_affix(&"volatile"):
 				e.fuse_t = tuning.elite_fuse
 				_emit({"type": "fuse", "id": e.id, "pos": e.pos, "radius": tuning.elite_blast_radius, "time": e.fuse_t})
-			# Always draw, so the drop chance never changes what the rng hands out next.
-			var roll := rng.randf()
-			if e.elite or roll < tuning.item_drop_chance:
-				drop_item("servo_trigger", e.pos)
+			_drop_loot(e)
 			if wave > 0 and grunts_alive() == 0:
 				_emit({"type": "wave_cleared", "wave": wave})
 				next_wave_t = tuning.wave_delay
@@ -650,27 +649,74 @@ func _blast(center: Vector2, radius: float, dmg: float) -> void:
 		var dir: Vector2 = (t.pos - center) / d if d > 0.0001 else Vector2.ZERO
 		damage(t.id, dmg, dir, tuning.knockback)
 
-## Put an item on the floor.
-func drop_item(kind: String, pos: Vector2) -> SimItem:
-	var it := SimItem.new(_next_id, kind, pos)
-	_next_id += 1
+## Drop tables, on a grunt's death. Every roll is drawn whatever the outcome, so the drop
+## chance never changes what the world rng hands out next; the item itself is rolled on a
+## sub-rng seeded from the world rng for the same reason.
+##   trash  item_drop_chance to drop; rare with drop_rare_chance, common otherwise
+##   elite  always drops; epic with elite_drop_epic_chance, rare otherwise
+## Slot uniform over SimItem.SLOTS.
+func _drop_loot(e: SimEntity) -> void:
+	var drop_roll := rng.randf()
+	var rarity_roll := rng.randf()
+	var slot: StringName = SimItem.SLOTS[rng.randi_range(0, SimItem.SLOTS.size() - 1)]
+	var item_seed := rng.randi()
+	if not e.elite and drop_roll >= tuning.item_drop_chance:
+		return
+	var rarity: StringName
+	if e.elite:
+		rarity = &"epic" if rarity_roll < tuning.elite_drop_epic_chance else &"rare"
+	else:
+		rarity = &"rare" if rarity_roll < tuning.drop_rare_chance else &"common"
+	var sub := RandomNumberGenerator.new()
+	sub.seed = item_seed
+	place_item(SimItem.roll(sub, rarity, slot, tuning), e.pos)
+
+## Roll an item of that rarity and slot (on a sub-rng seeded from the world rng) and put it on
+## the floor. Harness and tests; play goes through _drop_loot.
+func drop_item(pos: Vector2, rarity: StringName = &"common", slot: StringName = &"weapon") -> SimItem:
+	var sub := RandomNumberGenerator.new()
+	sub.seed = rng.randi()
+	return place_item(SimItem.roll(sub, rarity, slot, tuning), pos)
+
+## Put an existing item on the floor (an id is assigned if it has none) and emit drop.
+func place_item(it: SimItem, pos: Vector2) -> SimItem:
+	if it.id <= 0:
+		it.id = _next_id
+		_next_id += 1
+	it.pos = pos
 	items[it.id] = it
-	_emit({"type": "drop", "id": it.id, "kind": it.kind, "pos": it.pos})
+	_emit({"type": "drop", "id": it.id, "slot": it.slot, "rarity": it.rarity, "pos": it.pos})
 	return it
 
-## Items within reach join the player's modifiers under their own id as source. No stacking
-## limit: two servo triggers are +60 %.
+## Walking over an item equips it: the slot's previous item loses its modifiers and lies where
+## the player stood, with its own id and affixes, unarmed until the player steps off it (else
+## the two would swap back and forth every tick). The new item's mods join the player under
+## source = item id. One swap per tick.
 func _pick_up(p: SimEntity) -> void:
 	var reach := p.radius + PICKUP_REACH
 	for id in items.keys():
 		var it: SimItem = items[id]
-		if it.pos.distance_squared_to(p.pos) > reach * reach:
+		var within := it.pos.distance_squared_to(p.pos) <= reach * reach
+		if not it.armed:
+			if not within:
+				it.armed = true
+			continue
+		if not within:
 			continue
 		items.erase(id)
-		picked_items.append(it)
+		var old: SimItem = equipped.get(it.slot)
+		var replaced_id := -1
+		if old != null:
+			player_stats.remove_source(old.id)
+			old.pos = p.pos
+			old.armed = false
+			items[old.id] = old
+			replaced_id = old.id
+		equipped[it.slot] = it
 		player_stats.add_all(it.id, it.mods)
 		_refresh_body()
-		_emit({"type": "pickup", "id": it.id, "kind": it.kind, "pos": it.pos, "mods": it.mods.duplicate(true)})
+		_emit({"type": "equip", "id": it.id, "slot": it.slot, "replaced_id": replaced_id, "pos": it.pos})
+		return
 
 func _emit(ev: Dictionary) -> void:
 	events.append(ev)
@@ -691,9 +737,9 @@ func to_dict() -> Dictionary:
 	var floor_items := []
 	for it in items.values():
 		floor_items.append(it.to_dict())
-	var carried := []
-	for it in picked_items:
-		carried.append(it.to_dict())
+	var worn := {}
+	for slot in equipped:
+		worn[String(slot)] = equipped[slot].to_dict()
 	var evs := []
 	for ev in events:
 		var d := {}
@@ -710,7 +756,7 @@ func to_dict() -> Dictionary:
 		"weapon": weapon.name,
 		"player_stats": player_stats.to_dict(),
 		"items": floor_items,
-		"picked_items": carried,
+		"equipped": worn,
 		"stats": stats,
 		"tuning": tuning.to_dict(),
 		"level": level.to_dict(),

@@ -135,13 +135,17 @@ func _on_event(ev: Dictionary, world: SimWorld, blocked: Array) -> void:
 			_spawn_swing(ev.pos, ev.dir, world.weapon)
 		"explosion":
 			_spawn_explosion(ev.pos, ev.radius)
-		"pickup":
+		"equip":
+			# The new item plays its exit; the replaced one is back in world.items and gets a
+			# fresh ItemView at the player's feet on the next sync.
 			var iv: ItemView = _item_views.get(ev.id)
+			var flash := ItemView.ITEM_COLOR
 			if iv != null:
 				iv.pickup()
+				flash = iv.color
 			var pv: EntityView = _views.get(world.player_id)
 			if pv != null:
-				pv.flash(ItemView.ITEM_COLOR, EntityView.AGGRO_FLASH_TIME)
+				pv.flash(flash, EntityView.AGGRO_FLASH_TIME)
 
 func _spawn_impact(pos: Vector2) -> void:
 	var m := MeshInstance3D.new()

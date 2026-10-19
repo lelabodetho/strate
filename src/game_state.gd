@@ -16,7 +16,8 @@ extends Node
 ##   --restart=<frame>     call restart() on that capture frame (tests the death -> R flow)
 ##   --next=<frame>        call next_wave() on that capture frame
 ##   --reset=<frame>       call reset_waves() on that capture frame
-##   --drop=x,z            put a servo_trigger on the floor at start (tests the pickup flow)
+##   --drop=x,z[,rarity[,slot]]  roll an item on the floor at start (default: common weapon;
+##                         rarity common | rare | epic, slot weapon | armor | module); --drop2=... for a second one
 ##   --elite=x,z[,affix,...]  hand-placed elite at start (affixes: shielded, volatile, fast)
 ##   --weapon=<name>       hunter | brute | technomancer
 ##   --look=<name>         render_test only: load tools/presets/look_<name>.json (default: "default")
@@ -71,8 +72,9 @@ func _ready() -> void:
 	if _args.has("weapon"):
 		world.set_weapon(String(_args["weapon"]))
 	world.begin()
-	if _args.has("drop"):
-		world.drop_item("servo_trigger", _vec_arg("drop", Vector2.ZERO))
+	for key in ["drop", "drop2"]:
+		if _args.has(key):
+			_drop_arg(String(_args[key]))
 	if _args.has("elite"):
 		var parts: PackedStringArray = String(_args["elite"]).split(",")
 		if parts.size() >= 2:
@@ -238,6 +240,19 @@ func _scripted_command() -> Command:
 	c.attack = String(_args.get("hold", "")).split(",").has("attack")
 	c.dash = _dash_ticks.has(world.tick + 1)
 	return c
+
+## --drop=x,z[,rarity[,slot]]: a rolled item on the floor (world rng, so the seed decides it).
+func _drop_arg(spec: String) -> void:
+	var parts := spec.split(",")
+	if parts.size() < 2:
+		return
+	var rarity := StringName(parts[2]) if parts.size() > 2 else &"common"
+	var slot := StringName(parts[3]) if parts.size() > 3 else &"weapon"
+	if not SimItem.RARITIES.has(rarity):
+		rarity = &"common"
+	if not SimItem.SLOTS.has(slot):
+		slot = &"weapon"
+	world.drop_item(Vector2(float(parts[0]), float(parts[1])), rarity, slot)
 
 func _vec_arg(key: String, fallback: Vector2) -> Vector2:
 	if not _args.has(key):

@@ -38,7 +38,7 @@ Ce repo est un kit de greybox (sim pure + harnais + tuning + arène) dont Strate
 - `tools/snap.sh` : lance la scène, capture, dump l'état. À utiliser après chaque changement visuel ou de gameplay.
 - `scenes/test/render_test.tscn` : même arène et même sim, rendue en 1/2 de résolution à travers `src/view/post_filter.gdshader` (F : pixel / dither / mix, défaut mix, entités toujours en pixel, windup sur un ton danger rouge). `tools/snap.sh --mode=pixel|dither|mix` capture cette scène et dépose aussi `<nom>_world.png` et `<nom>_entities.png` (viewports bruts). Le look (mode, dither, scanlines, échelle du viewport, lampes) est un `Look` côté view, édité dans le bloc « rendu » du panneau, sauvé dans `tools/presets/look_<nom>.json` ; `look_default.json` est chargé au démarrage s'il existe (`--look=<nom>` pour un autre).
 - Ne jamais déclarer une feature terminée sans avoir lancé `tools/snap.sh` et regardé l'image.
-- Événements de sim (`SimWorld.events`, vidé à chaque tick, consommés une fois par tick par le view) : hit, kill, dodge, shot, impact, wave_cleared, swing, explosion, stagger, aggro, deaggro, drop, pickup, blocked (coup frontal sur un blindé), fuse (élite instable mort, explosion dans `time`), blast.
+- Événements de sim (`SimWorld.events`, vidé à chaque tick, consommés une fois par tick par le view) : hit, kill, dodge, shot, impact, wave_cleared, swing, explosion, stagger, aggro, deaggro, drop (item au sol : `slot`, `rarity`), equip (le joueur a marché dessus ; `replaced_id` = l'ancien item du slot, posé à ses pieds), blocked (coup frontal sur un blindé), fuse (élite instable mort, explosion dans `time`), blast.
 - `tools/sim_test.gd` : tests headless de la sim (`godot --headless --path . -s tools/sim_test.gd`). À lancer après tout changement dans `src/sim/`.
 - Les valeurs de référence du gameplay sont dans `tools/presets/default.json`, pas dans le code : `GameState` le charge au démarrage, le panneau in-game (Tab) l'édite et « Save » l'écrit. Les défauts de `SimTuning` sont la fixture de `tools/sim_test.gd` et ne bougent pas. `tools/out/` (captures) porte un `.gdignore` pour que l'éditeur ne réimporte pas les PNG.
 
@@ -51,7 +51,7 @@ Ce repo est un kit de greybox (sim pure + harnais + tuning + arène) dont Strate
 - J2b : premier item — bouclé. SimStats + SimItem, le pickup se sent.
 - J2c : rendu — bouclé. `render_test.tscn`, mode `mix` par défaut, entités toujours en `pixel`. Langage visuel : orange = joueur, rouge DANGER = menace, gris acier = monde.
 - J3 : viewer de personnage (8 directions, sliders, export PNG, JSON)
-- J4 : contenu — en cours. Première brique bouclée : élites avec affixes (blindé / instable / célère, `SimWorld.AFFIXES`), une par vague dès `elite_from_wave`, chaque affixe a un contre que le hunter de départ possède déjà. Reste : loot (rareté, slots, affixes), paliers, boss, éditeur de zone.
+- J4 : contenu — en cours. Brique 1 bouclée : élites avec affixes (blindé / instable / célère, `SimWorld.AFFIXES`), une par vague dès `elite_from_wave`, chaque affixe a un contre que le hunter de départ possède déjà. Brique 2 bouclée : loot généré (`SimItem.roll` : slot arme / armure / module, rareté série / modifié / relique = 1 / 2 / 3 affixes, paliers T1–T3 à `affix_t1..t3`), équipement par swap (`SimWorld.equipped`, l'ancien item retombe aux pieds), tables de drop dans le tuning. Reste : paliers, boss, éditeur de zone.
 - J5 : coop 1–4
 - J6+ : classes 2–3, biomes, saisons
 

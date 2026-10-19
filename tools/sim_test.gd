@@ -31,7 +31,11 @@ func _init() -> void:
 	test_provoke()
 	test_stats_mods()
 	test_item_drop()
+	test_item_roll()
+	test_breakpoint()
 	test_item_pickup()
+	test_equip_swap()
+	test_drop_tables()
 	test_items_persist()
 	test_elite_spawn()
 	test_shielded()
@@ -601,7 +605,7 @@ func test_stats_mods() -> void:
 	w2.set_weapon("brute")
 	check(is_equal_approx(w2.fire_interval(), 0.5) and w2.player_stats.has_source("weapon"), "brute: weapon mods give 0.5 s (%.3f)" % w2.fire_interval())
 	w2.player_stats.add(1, "fire_rate", 0.30)
-	check(is_equal_approx(w2.fire_interval(), 0.5 / 1.3), "brute + servo: 0.5 / 1.3 s (%.3f)" % w2.fire_interval())
+	check(is_equal_approx(w2.fire_interval(), 0.5 / 1.3), "brute + item: 0.5 / 1.3 s (%.3f)" % w2.fire_interval())
 	w2.set_weapon("hunter")
 	check(is_equal_approx(w2.fire_interval(), 0.15 / 1.3), "switching weapons keeps the item mods (%.3f)" % w2.fire_interval())
 	# In play: shots per second go up by 30 %.
@@ -631,8 +635,10 @@ func test_item_drop() -> void:
 	var g := w.spawn(&"grunt", Vector2(2, -20))
 	w.damage(g.id, g.hp_max, Vector2.ZERO, 0.0)
 	var drops := w.events.filter(func(ev): return ev.type == "drop")
-	check(w.items.size() == 1 and drops.size() == 1 and w.items.values()[0].pos == g.pos and w.items.values()[0].kind == "servo_trigger",
-		"chance 1: the dead grunt leaves a servo_trigger where it fell, with a drop event")
+	var it: SimItem = w.items.values()[0] if w.items.size() == 1 else null
+	check(it != null and drops.size() == 1 and it.pos == g.pos and drops[0].slot == it.slot and drops[0].rarity == it.rarity
+		and SimItem.SLOTS.has(it.slot) and (it.rarity == &"common" or it.rarity == &"rare"),
+		"chance 1: the dead grunt leaves an item where it fell (%s %s), with a drop event" % [it.rarity if it else "", it.slot if it else ""])
 	w.tuning.item_drop_chance = 0.0
 	_kill_grunts(w, 20)
 	check(w.items.size() == 1, "chance 0: nothing drops")
@@ -647,58 +653,215 @@ func test_item_drop() -> void:
 	c.spawn(&"player", Vector2(0, 9))
 	_kill_grunts(c, 100)
 	check(a.items.size() > 0 and JSON.stringify(a.to_dict()["items"]) == JSON.stringify(b.to_dict()["items"]),
-		"same seed = same drops (%d of 100)" % a.items.size())
+		"same seed = same drops, same affixes (%d of 100)" % a.items.size())
 	check(JSON.stringify(a.to_dict()["items"]) != JSON.stringify(c.to_dict()["items"]), "different seed = different drops (%d of 100)" % c.items.size())
 	check(a.items.size() >= 10 and a.items.size() <= 32, "drop rate near 20 %% (%d of 100)" % a.items.size())
+	# The drop chance only decides whether the item appears, never what the rng hands out next:
+	# two worlds that differ only by the chance place the next wave identically.
+	var d := SimWorld.new(11)
+	d.spawn(&"player", Vector2(0, 9))
+	d.tuning.item_drop_chance = 0.0
+	_kill_grunts(d, 100)
+	a.start_wave(3)
+	d.start_wave(3)
+	check(d.items.is_empty() and _grunt_positions(a) == _grunt_positions(d), "the drop chance does not move the next wave's grunts")
+
+func test_item_roll() -> void:
+	var t := SimTuning.new()
+	var pcts := [t.affix_t1, t.affix_t2, t.affix_t3]
+	for rarity in SimItem.RARITIES:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 5
+		var it := SimItem.roll(rng, rarity, &"weapon", t)
+		var stats := []
+		var ok: bool = it.affixes.size() == SimItem.AFFIX_COUNT[rarity] and it.mods.size() == it.affixes.size()
+		for i in it.affixes.size():
+			var a: Dictionary = it.affixes[i]
+			ok = ok and SimItem.POOLS[&"weapon"].has(a.stat) and not stats.has(a.stat)
+			ok = ok and a.tier >= 1 and a.tier <= 3 and is_equal_approx(a.pct, pcts[a.tier - 1])
+			ok = ok and it.mods[i].stat == a.stat and is_equal_approx(it.mods[i].pct, a.pct)
+			stats.append(a.stat)
+		check(ok and it.slot == &"weapon" and it.rarity == rarity, "%s weapon: %d distinct affixes from the pool, tier pcts from the tuning (%s)" % [rarity, it.affixes.size(), JSON.stringify(it.affixes)])
+	# Negative-is-good stats carry -pct; everything else +pct.
+	var neg := SimItem.make(&"armor", &"rare", [{"stat": "damage_taken", "tier": 2}, {"stat": "player_hp", "tier": 3}], t)
+	check(is_equal_approx(neg.affixes[0].pct, -t.affix_t2) and is_equal_approx(neg.affixes[1].pct, t.affix_t3) and neg.name_key == "armor_player_hp",
+		"damage_taken T2 reads -15 %%, player_hp T3 +25 %%, name_key from the best affix (%s)" % neg.name_key)
+	var mod_rng := RandomNumberGenerator.new()
+	mod_rng.seed = 9
+	var neg_seen := 0
+	var tiers := [0, 0, 0]
+	for i in 300:
+		var m := SimItem.roll(mod_rng, &"epic", &"module", t)
+		for a in m.affixes:
+			tiers[a.tier - 1] += 1
+			if a.stat == "dash_cooldown":
+				neg_seen += 1
+				if a.pct >= 0.0:
+					neg_seen = -1000
+	check(neg_seen > 0, "rolled dash_cooldown affixes are all negative (%d seen)" % neg_seen)
+	var total := float(tiers[0] + tiers[1] + tiers[2])
+	check(tiers[0] / total > 0.42 and tiers[0] / total < 0.58 and tiers[2] / total > 0.09 and tiers[2] / total < 0.21,
+		"tiers over 900 affixes near 50/35/15 (%d/%d/%d)" % tiers)
+	var r1 := RandomNumberGenerator.new()
+	r1.seed = 77
+	var r2 := RandomNumberGenerator.new()
+	r2.seed = 77
+	var i1 := SimItem.roll(r1, &"epic", &"weapon", t)
+	var i2 := SimItem.roll(r2, &"epic", &"weapon", t)
+	check(JSON.stringify(i1.to_dict()) == JSON.stringify(i2.to_dict()), "same seed, same item")
+
+## Shots landed on a grunt before it dies, with a proj_damage weapon of that tier on the
+## default preset's numbers (22 damage, 80 hp).
+func _shots_to_kill(tier: int) -> int:
+	var t := SimTuning.new()
+	t.proj_damage = 22.0
+	t.grunt_hp = 80.0
+	t.grunt_speed = 0.5
+	var w := SimWorld.new(1, null, t)
+	var p := w.spawn(&"player", Vector2(0, 9))
+	if tier > 0:
+		w.place_item(SimItem.make(&"weapon", &"common", [{"stat": "proj_damage", "tier": tier}], t), p.pos)
+	w.step(DT, cmd())
+	var g := w.spawn(&"grunt", Vector2(0, 3))
+	var hits := 0
+	for i in 240:
+		w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), true))
+		for ev in w.events:
+			if ev.type == "hit" and ev.target == g.id:
+				hits += 1
+		if not g.alive:
+			return hits
+	return -1
+
+func test_breakpoint() -> void:
+	check(_shots_to_kill(0) == 4, "22 vs 80: 4 shots bare (%d)" % _shots_to_kill(0))
+	check(_shots_to_kill(2) == 4, "T2 +15 %% (25.3): still 4 shots (%d)" % _shots_to_kill(2))
+	check(_shots_to_kill(3) == 3, "T3 +25 %% (27.5): 3 shots, the breakpoint moves (%d)" % _shots_to_kill(3))
 
 func test_item_pickup() -> void:
 	var w := SimWorld.new(1)
 	var p := w.spawn(&"player", Vector2(0, 9))
-	var it := w.drop_item("servo_trigger", Vector2(0, 6))
+	var it := w.place_item(SimItem.make(&"weapon", &"common", [{"stat": "fire_rate", "tier": 1}], w.tuning), Vector2(0, 6))
 	var reach := p.radius + SimWorld.PICKUP_REACH
 	var before := w.fire_interval()
 	# Standing just outside the reach: nothing.
 	p.pos = Vector2(0, 6 + reach + 0.05)
 	w.step(DT, cmd())
-	check(w.items.has(it.id) and w.picked_items.is_empty(), "no pickup at %.2f" % (reach + 0.05))
-	# Walking in: picked up, mod added under the item's id, event emitted.
-	var picked := false
+	check(w.items.has(it.id) and w.equipped.is_empty(), "no pickup at %.2f" % (reach + 0.05))
+	# Walking in: equipped, mod added under the item's id, event emitted.
+	var equip_ev := {}
 	for i in 30:
 		w.step(DT, cmd(Vector2(0, -1)))
 		for ev in w.events:
-			if ev.type == "pickup" and ev.id == it.id and ev.kind == "servo_trigger":
-				picked = true
-	check(picked and not w.items.has(it.id) and w.picked_items.size() == 1 and w.picked_items[0] == it,
-		"walking over the item picks it up and emits pickup")
-	check(w.player_stats.has_source(it.id) and is_equal_approx(w.fire_interval(), before / 1.3),
+			if ev.type == "equip" and ev.id == it.id:
+				equip_ev = ev
+	check(not equip_ev.is_empty() and equip_ev.slot == &"weapon" and equip_ev.replaced_id == -1 and not w.items.has(it.id) and w.equipped.get(&"weapon") == it,
+		"walking over the item equips it and emits equip (empty slot: replaced_id -1)")
+	check(w.player_stats.has_source(it.id) and is_equal_approx(w.fire_interval(), before / 1.08),
 		"the mod is on the player under source = item id (%.4f s)" % w.fire_interval())
-	var it2 := w.drop_item("servo_trigger", p.pos)
+	var armor := w.place_item(SimItem.make(&"armor", &"common", [{"stat": "player_hp", "tier": 1}], w.tuning), p.pos)
 	w.step(DT, cmd())
-	check(w.picked_items.size() == 2 and is_equal_approx(w.fire_interval(), before / 1.6), "two items: +60 %% (%.4f s)" % w.fire_interval())
+	check(w.equipped.size() == 2 and w.equipped.get(&"armor") == armor and is_equal_approx(p.hp_max, w.tuning.player_hp * 1.08),
+		"another slot stacks: two items worn, hp max %.1f" % p.hp_max)
+
+func test_equip_swap() -> void:
+	var w := SimWorld.new(1)
+	var p := w.spawn(&"player", Vector2(0, 9))
+	var base_rate := w.player_stats.value("fire_rate")
+	var base_dmg := w.player_stats.value("proj_damage")
+	var a := w.place_item(SimItem.make(&"weapon", &"common", [{"stat": "fire_rate", "tier": 1}], w.tuning), Vector2(0, 6))
+	var b := w.place_item(SimItem.make(&"weapon", &"rare", [{"stat": "proj_damage", "tier": 2}, {"stat": "knockback", "tier": 1}], w.tuning), Vector2(0, 4))
+	var swap_pos := Vector2.ZERO
+	var ticks := 0
+	while w.equipped.get(&"weapon") != b and ticks < 120:
+		w.step(DT, cmd(Vector2(0, -1)))
+		ticks += 1
+		for ev in w.events:
+			if ev.type == "equip" and ev.id == b.id:
+				swap_pos = p.pos
+				check(ev.replaced_id == a.id, "equip event names the replaced item")
+	check(w.equipped.get(&"weapon") == b and w.items.has(a.id) and w.items[a.id] == a and a.pos == swap_pos and not a.armed,
+		"walking over the second weapon equips it; the first lies where the player stood, same id")
+	check(w.player_stats.has_source(b.id) and not w.player_stats.has_source(a.id)
+		and is_equal_approx(w.player_stats.value("fire_rate"), base_rate) and is_equal_approx(w.player_stats.value("proj_damage"), base_dmg * 1.15),
+		"the player's mods reflect only the equipped weapon")
+	# The dropped weapon stays unarmed under the player's feet, and re-arms once stepped off.
+	run(w, 0.1, cmd())
+	check(w.equipped.get(&"weapon") == b and not a.armed, "standing on the dropped item does not swap back")
+	run(w, 1.0, cmd(Vector2(0, -1)))
+	check(a.armed and w.items.has(a.id), "stepping off re-arms it")
+	# Stacking: the same stat on two slots adds (weapon T1 + module T1 fire_rate = +16 %), and
+	# fire_rate × proj_damage multiply in the kill time.
+	var w2 := SimWorld.new(1)
+	var p2 := w2.spawn(&"player", Vector2(0, 9))
+	w2.place_item(SimItem.make(&"weapon", &"common", [{"stat": "fire_rate", "tier": 1}], w2.tuning), p2.pos)
+	w2.step(DT, cmd())
+	w2.place_item(SimItem.make(&"module", &"common", [{"stat": "fire_rate", "tier": 1}], w2.tuning), p2.pos)
+	w2.step(DT, cmd())
+	check(w2.equipped.size() == 2 and is_equal_approx(w2.player_stats.value("fire_rate"), base_rate * 1.16),
+		"weapon T1 + module T1 fire_rate = +16 %% additive (%.3f/s)" % w2.player_stats.value("fire_rate"))
+	w2.place_item(SimItem.make(&"module", &"common", [{"stat": "proj_damage", "tier": 2}], w2.tuning), p2.pos)
+	run(w2, 1.0, cmd(Vector2(0, -1)))   # steps off the swapped-out module, which stays on the floor
+	var dps := w2.player_stats.value("fire_rate") * w2.player_stats.value("proj_damage")
+	check(w2.items.size() == 1 and is_equal_approx(dps, base_rate * base_dmg * 1.08 * 1.15),
+		"fire_rate +8 %% × proj_damage +15 %%: damage per second × 1.242 (%.2f)" % dps)
+
+func test_drop_tables() -> void:
+	var w := SimWorld.new(21)
+	w.spawn(&"player", Vector2(0, 9))
+	w.tuning.item_drop_chance = 1.0
+	_kill_grunts(w, 200)
+	var rare := 0
+	var other := 0
+	for it in w.items.values():
+		if it.rarity == &"rare":
+			rare += 1
+		elif it.rarity != &"common":
+			other += 1
+	check(w.items.size() == 200 and other == 0 and rare >= 20 and rare <= 60, "200 trash kills: %d rare, rest common" % rare)
+	var w2 := SimWorld.new(22)
+	w2.spawn(&"player", Vector2(0, 9))
+	w2.tuning.item_drop_chance = 0.0
+	var epic := 0
+	var low := 0
+	for i in 50:
+		var e := w2.spawn_elite(Vector2(-6 + i * 0.5, -20), [&"fast"])
+		w2.damage(e.id, e.hp_max, Vector2.ZERO, 0.0)
+	for it in w2.items.values():
+		if it.rarity == &"epic":
+			epic += 1
+		elif it.rarity != &"rare":
+			low += 1
+	check(w2.items.size() == 50 and low == 0 and epic >= 8 and epic <= 22, "50 elite kills: every drop rare or epic, %d epic" % epic)
+	var slots := {}
+	for it in w.items.values():
+		slots[it.slot] = slots.get(it.slot, 0) + 1
+	check(slots.size() == 3 and slots.values().min() >= 40, "slots uniform over 200 drops (%s)" % JSON.stringify(slots))
 
 func test_items_persist() -> void:
 	var w := SimWorld.new(1)
 	w.begin()
 	var p := w.player()
-	var it := w.drop_item("servo_trigger", p.pos)
-	var it_floor := w.drop_item("servo_trigger", Vector2(0, -20))
+	var it := w.drop_item(p.pos, &"rare", &"weapon")
+	var it_floor := w.drop_item(Vector2(0, -20))
 	w.step(DT, cmd())
-	var base := SimStats.new(w.tuning).fire_interval()
-	check(w.picked_items.size() == 1 and is_equal_approx(w.fire_interval(), base / 1.3), "carrying one servo trigger")
+	check(w.equipped.get(&"weapon") == it and w.player_stats.has_source(it.id), "wearing a rare weapon")
 	w.damage(p.id, p.hp_max + 1.0)
 	w.restart_wave()
-	check(w.picked_items.size() == 1 and w.player_stats.has_source(it.id) and is_equal_approx(w.fire_interval(), base / 1.3) and p.alive,
-		"R: the item stays on the player (%.4f s)" % w.fire_interval())
+	check(w.equipped.get(&"weapon") == it and w.player_stats.has_source(it.id) and p.alive, "R: the equipment stays on the player")
 	check(not w.items.has(it_floor.id), "R: the floor is cleared")
 	w.start_wave(3)
-	check(w.picked_items.size() == 1, "N: the item stays too")
+	check(w.equipped.get(&"weapon") == it, "N: the equipment stays too")
+	var base := SimStats.new(w.tuning).fire_interval()
 	w.reset_run()
-	check(w.picked_items.is_empty() and not w.player_stats.has_source(it.id) and is_equal_approx(w.fire_interval(), base) and w.wave == 1,
-		"0: back to wave 1 without the item (%.4f s)" % w.fire_interval())
+	check(w.equipped.is_empty() and not w.player_stats.has_source(it.id) and is_equal_approx(w.fire_interval(), base) and w.wave == 1,
+		"0: back to wave 1 without the equipment (%.4f s)" % w.fire_interval())
 	check(w.player_stats.has_source("weapon") or w.weapon.name == "hunter", "0: the weapon profile is untouched")
 	w.set_weapon("brute")
 	w.reset_run()
 	check(w.weapon.name == "brute" and is_equal_approx(w.fire_interval(), base * 0.5 / 0.15), "0 keeps the weapon profile and its mods")
+	var d: Dictionary = w.to_dict()
+	check(d.has("equipped") and d.equipped is Dictionary and not d.has("picked_items"), "to_dict: equipment by slot")
 
 func _elites(w: SimWorld) -> Array:
 	return w.entities.values().filter(func(e): return e.kind == &"grunt" and e.elite)
@@ -839,7 +1002,7 @@ func test_elite_drop() -> void:
 	w.tuning.item_drop_chance = 0.0
 	var e := w.spawn_elite(Vector2(0, -20), [&"fast"])
 	w.damage(e.id, e.hp_max)
-	check(w.items.size() == 1, "an elite always drops")
+	check(w.items.size() == 1 and w.items.values()[0].rarity != &"common", "an elite always drops, never a common")
 	_kill_grunts(w, 20)
 	check(w.items.size() == 1, "chance 0: 20 grunts drop nothing more")
 

@@ -35,7 +35,7 @@ Verdict en 30 secondes de jeu ou on jette : si ce n'est pas fun avec des cubes, 
 
 - Sim sans Node. Si un fichier de `src/sim/` importe Input, Mesh ou get_tree, c'est une faute.
 - Tout passe par `Command`. Pas d'input qui touche le monde.
-- Les multiplicateurs (profils, items, buffs) s'appliquent sur les valeurs du tuning, via `SimStats` : `tuning × Π mult × (1 + Σ pct) + Σ flat`. Les profils d'arme sont des `mult` (source `weapon`), les items des `pct` additifs (source = id de l'item). Le monde ne lit jamais le tuning directement pour le joueur.
+- Les multiplicateurs (profils, items, buffs) s'appliquent sur les valeurs du tuning, via `SimStats` : `tuning × Π mult × (1 + Σ pct) + Σ flat`. Les profils d'arme sont des `mult` (source `weapon`), les items des `pct` additifs (source = id de l'item, un item équipé par slot dans `SimWorld.equipped`). Le monde ne lit jamais le tuning directement pour le joueur.
 - Les valeurs de référence vivent dans `tools/presets/default.json`, jamais en dur dans le code ; les défauts de `SimTuning` sont la fixture des tests.
 - Une feature n'est terminée qu'avec sa capture et ses tests headless.
 - Le view consomme les events une fois par tick de sim, jamais par frame.
