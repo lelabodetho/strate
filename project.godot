@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="Strate"
-run/main_scene="res://scenes/test/harness.tscn"
+run/main_scene="res://scenes/test/render_test.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
 

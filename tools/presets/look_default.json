@@ -1,0 +1,9 @@
+{
+  "cold_light_energy": 2.0,
+  "dither": 0.5,
+  "mode": "mix",
+  "player_light_color": "ffd6a3",
+  "player_light_energy": 2.0,
+  "scanlines": 0.5,
+  "viewport_scale": 2
+}
