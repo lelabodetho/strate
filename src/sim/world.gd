@@ -6,8 +6,6 @@ extends RefCounted
 # Waves
 const WAVE_BASE := 3
 const WAVE_STEP := 2
-const WAVE_CAP := 12
-const WAVE_DELAY := 2.0        # seconds between the last kill and the next wave
 const SPAWN_MIN_DIST := 8.0    # grunts never appear closer than this to the player
 const PACK_RADIUS := 2.0       # wave grunts spawn within this distance of their pack center
 const PACK_MIN := 2
@@ -49,6 +47,7 @@ var swing_dir: Vector2 = Vector2.DOWN
 var wave: int = 0
 var next_wave_t: float = 0.0   # > 0 while counting down to the next wave
 var wave_packs: Array[Vector2] = []   # pack centers of the current wave
+var wave_fallbacks: int = 0           # pack centers placed by the fallback this wave (constraints unmet)
 var items: Dictionary = {}            # id -> SimItem, lying on the floor
 var picked_items: Array[SimItem] = [] # what the player carries, in pickup order
 
@@ -85,19 +84,21 @@ func begin() -> void:
 	spawn(&"player", level.player_spawn)
 	start_wave(1)
 
-## Wave n: clear remaining grunts, spawn min(cap, 3 + 2*(n-1)) of them as 2–4 packs of 2–4,
-## each pack within PACK_RADIUS of a seeded center on one of the level's floors, never within
-## SPAWN_MIN_DIST of the player. Small waves get fewer or smaller packs so the total holds.
+## Wave n: clear remaining grunts, spawn min(wave_cap, 3 + 2*(n-1)) of them as 2–4 packs of
+## 2–4, each pack within PACK_RADIUS of a seeded center on one of the level's floors, never
+## within SPAWN_MIN_DIST of the player and at least pack_spacing from the other centers. Small
+## waves get fewer or smaller packs so the total holds.
 func start_wave(n: int) -> void:
 	wave = n
 	stats.wave = n
 	next_wave_t = 0.0
 	wave_packs.clear()
+	wave_fallbacks = 0
 	for id in entities.keys():
 		if entities[id].kind == &"grunt":
 			entities.erase(id)
 	var p := player()
-	var count := mini(WAVE_CAP, WAVE_BASE + WAVE_STEP * (n - 1))
+	var count := mini(int(tuning.wave_cap), WAVE_BASE + WAVE_STEP * (n - 1))
 	var sizes := _pack_sizes(count)
 	var placed: Array[Vector2] = []
 	for pack_i in sizes.size():
@@ -109,9 +110,11 @@ func start_wave(n: int) -> void:
 			var g := spawn(&"grunt", pos)
 			g.pack = pack_i
 			placed.append(pos)
-	# One elite per wave, leading a seeded pack. Drawn after every placement so toggling
-	# elites never moves a grunt.
-	if tuning.elite_from_wave > 0.0 and n >= int(tuning.elite_from_wave) and not sizes.is_empty():
+	# One elite every elite_every waves from elite_from_wave, leading a seeded pack. Drawn after
+	# every placement so toggling elites never moves a grunt.
+	var from := int(tuning.elite_from_wave)
+	var every := maxi(1, int(tuning.elite_every))
+	if from > 0 and n >= from and (n - from) % every == 0 and not sizes.is_empty():
 		var lead_pack := rng.randi_range(0, sizes.size() - 1)
 		var affixes: Array[StringName] = []
 		var pool := AFFIXES.duplicate()
@@ -156,13 +159,22 @@ func _pack_sizes(count: int) -> Array[int]:
 		sizes.append(int(count / packs) + (1 if i < count % packs else 0))
 	return sizes
 
+## A pack center: on the floor, clear of placed grunts, farther than min_dist from the player
+## and at least pack_spacing from the centers already in wave_packs. With spacing on, the
+## candidates are drawn from every floor (a corridor rarely holds two centers 10 apart) and
+## twice as many are tried. When no candidate passes, the one farthest from both constraints
+## wins, so a small level never fails.
 func _find_spawn(area: Rect2, p: SimEntity, placed: Array[Vector2], min_dist: float) -> Vector2:
 	var r := tuning.grunt_radius + 0.1
 	var best := Vector2.INF
 	var best_d := -1.0
-	for attempt in 64:
-		var pos := Vector2(rng.randf_range(area.position.x + r, area.end.x - r),
-			rng.randf_range(area.position.y + r, area.end.y - r))
+	var spaced := tuning.pack_spacing > 0.0
+	for attempt in (128 if spaced else 64):
+		var floor_rect := area
+		if spaced and level.floors.size() > 1:
+			floor_rect = level.floors[rng.randi_range(0, level.floors.size() - 1)]
+		var pos := Vector2(rng.randf_range(floor_rect.position.x + r, floor_rect.end.x - r),
+			rng.randf_range(floor_rect.position.y + r, floor_rect.end.y - r))
 		if not level.circle_fits(pos, r):
 			continue
 		var d_player := pos.distance_to(p.pos) if p != null else INF
@@ -173,11 +185,18 @@ func _find_spawn(area: Rect2, p: SimEntity, placed: Array[Vector2], min_dist: fl
 				break
 		if crowded:
 			continue
-		if d_player > min_dist:
+		var d_center := INF
+		if spaced:
+			for c in wave_packs:
+				d_center = minf(d_center, c.distance_to(pos))
+		if d_player > min_dist and d_center >= tuning.pack_spacing:
 			return pos
-		if d_player > best_d:
-			best_d = d_player
+		# Fallback score: with spacing off, exactly the old "farthest from the player" rule.
+		var score := minf(d_player, d_center) if spaced else d_player
+		if score > best_d:
+			best_d = score
 			best = pos
+	wave_fallbacks += 1
 	return best if best != Vector2.INF else area.get_center()
 
 ## A free spot within PACK_RADIUS of the pack center, still clear of the player.
@@ -596,7 +615,7 @@ func damage(id: int, amount: float, dir: Vector2 = Vector2.ZERO, kb: float = -1.
 				drop_item("servo_trigger", e.pos)
 			if wave > 0 and grunts_alive() == 0:
 				_emit({"type": "wave_cleared", "wave": wave})
-				next_wave_t = WAVE_DELAY
+				next_wave_t = tuning.wave_delay
 	return true
 
 ## Volatile corpses count down, then blast: the player (i-frames apply, so a dash through
@@ -680,6 +699,7 @@ func to_dict() -> Dictionary:
 		"player_id": player_id, "dashing": is_dashing(), "invulnerable": is_invulnerable(),
 		"wave": wave, "grunts_alive": grunts_alive(), "next_wave_in": snappedf(next_wave_t, 0.01),
 		"wave_packs": wave_packs.map(func(c: Vector2): return [snappedf(c.x, 0.01), snappedf(c.y, 0.01)]),
+		"wave_fallbacks": wave_fallbacks,
 		"weapon": weapon.name,
 		"player_stats": player_stats.to_dict(),
 		"items": floor_items,

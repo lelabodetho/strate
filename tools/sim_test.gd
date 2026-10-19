@@ -38,6 +38,7 @@ func _init() -> void:
 	test_volatile()
 	test_fast()
 	test_elite_drop()
+	test_wave_pacing()
 	print("[sim_test] ", "OK" if failures == 0 else "FAILED (%d)" % failures)
 	quit(1 if failures > 0 else 0)
 
@@ -838,3 +839,55 @@ func test_elite_drop() -> void:
 	check(w.items.size() == 1, "an elite always drops")
 	_kill_grunts(w, 20)
 	check(w.items.size() == 1, "chance 0: 20 grunts drop nothing more")
+
+func test_wave_pacing() -> void:
+	# wave_delay: the next wave waits that long after the last kill.
+	var w := SimWorld.new(1)
+	w.tuning.wave_delay = 5.0
+	w.begin()
+	for g in w.entities.values().filter(func(e): return e.kind == &"grunt"):
+		w.damage(g.id, g.hp_max)
+	check(is_equal_approx(w.next_wave_t, 5.0), "wave_delay arms the timer at 5 s")
+	run(w, 4.5, cmd())
+	check(w.wave == 1, "still wave 1 after 4.5 s")
+	run(w, 0.6, cmd())
+	check(w.wave == 2, "wave 2 after 5 s")
+	# wave_cap.
+	var w2 := SimWorld.new(1)
+	w2.tuning.wave_cap = 5.0
+	w2.begin()
+	w2.start_wave(10)
+	check(_grunt_positions(w2).size() == 5, "wave_cap 5: wave 10 has 5 grunts")
+	# pack_spacing: every pair of centers at least 10 apart, or the fallback picked the farthest.
+	var w3 := SimWorld.new(1)
+	w3.tuning.pack_spacing = 10.0
+	w3.begin()
+	var ok := true
+	var clean_waves := 0
+	var min_pair := INF
+	for n in range(2, 8):
+		w3.start_wave(n)
+		if w3.wave_fallbacks == 0:
+			clean_waves += 1
+		for i in w3.wave_packs.size():
+			for j in range(i + 1, w3.wave_packs.size()):
+				var d: float = w3.wave_packs[i].distance_to(w3.wave_packs[j])
+				min_pair = minf(min_pair, d)
+				ok = ok and (d >= 10.0 or w3.wave_fallbacks > 0)
+	check(ok and clean_waves >= 3, "pack_spacing 10: centers >= 10 apart unless the fallback had to pick the farthest (%d/6 waves clean, min %.1f)" % [clean_waves, min_pair])
+	var w3b := SimWorld.new(1)
+	w3b.begin()
+	w3b.start_wave(2)
+	check(w3b.wave_fallbacks == 0, "spacing off: no fallback on the arena")
+	# elite_every 2 with elite_from_wave 2: elites on waves 2 and 4, none on 3.
+	var w4 := SimWorld.new(1)
+	w4.tuning.elite_every = 2.0
+	w4.begin()
+	var pattern := []
+	for n in [2, 3, 4, 5]:
+		w4.start_wave(n)
+		pattern.append(_elites(w4).size())
+	check(pattern == [1, 0, 1, 0], "elite_every 2: elites on waves 2 and 4 only (%s)" % [pattern])
+	# Defaults: the old constants, wave 6 capped at 12, 2 s delay.
+	var w5 := SimWorld.new(1)
+	check(w5.tuning.wave_delay == 2.0 and w5.tuning.wave_cap == 12.0 and w5.tuning.pack_spacing == 0.0 and w5.tuning.elite_every == 1.0, "defaults unchanged")

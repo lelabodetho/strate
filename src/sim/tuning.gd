@@ -34,7 +34,11 @@ const SPECS := [
 	["aggro_drop_mult", 1.0, 4.0, 0.1],
 	["provoke_time", 0.0, 15.0, 0.5],
 	["item_drop_chance", 0.0, 1.0, 0.05],
+	["wave_delay", 0.5, 15.0, 0.5],
+	["wave_cap", 3.0, 24.0, 1.0],
+	["pack_spacing", 0.0, 20.0, 1.0],
 	["elite_from_wave", 0.0, 20.0, 1.0],
+	["elite_every", 1.0, 5.0, 1.0],
 	["elite_hp_mult", 1.0, 10.0, 0.5],
 	["elite_damage_mult", 1.0, 5.0, 0.1],
 	["elite_body_mult", 1.0, 2.0, 0.05],
@@ -83,9 +87,17 @@ var provoke_time := 4.0        # a hit grunt ignores the leash for this long, re
 # Loot
 var item_drop_chance := 0.2    # chance a dying grunt leaves an item on the floor
 
-# Elites: one per wave from elite_from_wave (0 = never), leading a pack. Tougher body, and one
-# affix (two from SimWorld.ELITE_SECOND_AFFIX_WAVE) that each have a counter the starter owns.
+# Wave pacing: the arena imitates the rhythm of a zone (packs spread out, one pull at a time,
+# a breath between pulls).
+var wave_delay := 2.0          # seconds between the last kill and the next wave
+var wave_cap := 12.0           # max grunts per wave
+var pack_spacing := 0.0        # min distance between two pack centers of a wave; 0 = off
+
+# Elites: one on every elite_every-th wave from elite_from_wave (0 = never), leading a pack.
+# Tougher body, and one affix (two from SimWorld.ELITE_SECOND_AFFIX_WAVE) that each have a
+# counter the starter owns.
 var elite_from_wave := 2.0
+var elite_every := 1.0
 var elite_hp_mult := 3.0
 var elite_damage_mult := 1.5
 var elite_body_mult := 1.2          # radius and hit radius
