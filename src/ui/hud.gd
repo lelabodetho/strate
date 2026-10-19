@@ -2,8 +2,10 @@ class_name Hud
 extends CanvasLayer
 ## Minimal HUD for the tuning arena: wave line top-left (with the effective cadence), an elite
 ## line while one is alive, one line per equipment slot under it ("Arme · modifié · cadence
-## +15 % · dégâts +8 %" in the rarity colour, "Arme · —" dim when empty), and "Au sol : … ·
-## [E] ramasser" for the nearest floor item within FLOOR_RANGE.
+## +15 % · dégâts +8 %" in the rarity colour, "Arme · —" dim when empty). The floor item under
+## the cursor (GameState.hovered_item) gets its line floating over it in the world, in the
+## rarity colour, and the cursor becomes a hand: click it to pick it up (E takes the nearest).
+## The scene sets `camera` so the label can be projected to the screen.
 ## "R pour recommencer" on death.
 ## Meta keys (physical, layout-independent): R restart the wave (when dead), N next wave,
 ## 0 back to wave 1, 1/2/3 weapon profile.
@@ -16,7 +18,7 @@ const EMPTY_COLOR := Color(0.85, 0.82, 0.78, 0.4)
 const DANGER_COLOR := Color(0.9, 0.15, 0.1)
 const AFFIX_NAMES := {"shielded": "blindé", "volatile": "instable", "fast": "célère"}
 const LINE_H := 22
-const FLOOR_RANGE := 3.0   # a floor item this close to the player gets its "Au sol" line
+const ITEM_LABEL_HEIGHT := 1.4   # world units over the item's ground point
 
 # Player-facing names (view-side only; the sim knows keys).
 const SLOT_NAMES := {"weapon": "Arme", "armor": "Armure", "module": "Module"}
@@ -28,7 +30,8 @@ const STAT_NAMES := {"fire_rate": "cadence", "proj_damage": "dégâts", "proj_sp
 var _wave_label: Label
 var _elite_label: Label
 var _slot_labels: Dictionary = {}   # slot -> Label
-var _floor_label: Label
+var _item_label: Label
+var camera: Camera3D   # set by the scene; projects the hovered item's label
 var _death_label: Label
 var _flash_t := 0.0
 
@@ -40,8 +43,8 @@ func _ready() -> void:
 	_elite_label.visible = false
 	for slot in SimItem.SLOTS:
 		_slot_labels[slot] = _make_label(16, EMPTY_COLOR)
-	_floor_label = _make_label(16, TEXT_COLOR)
-	_floor_label.visible = false
+	_item_label = _make_label(16, TEXT_COLOR)
+	_item_label.visible = false
 
 	_death_label = Label.new()
 	_death_label.text = "R pour recommencer"
@@ -107,25 +110,26 @@ func _process(dt: float) -> void:
 		else:
 			l.text = item_line(it)
 			l.add_theme_color_override("font_color", ItemView.RARITY_COLORS.get(it.rarity, TEXT_COLOR))
-	# Nearest floor item within reach of a decision.
-	var near: SimItem = null
-	var near_d := FLOOR_RANGE * FLOOR_RANGE
-	if p != null:
-		for it in w.items.values():
-			var d2: float = it.pos.distance_squared_to(p.pos)
-			if d2 <= near_d:
-				near = it
-				near_d = d2
-	_floor_label.visible = near != null
-	if near != null:
-		_floor_label.position = Vector2(16, y)
-		_floor_label.text = "Au sol : " + item_line(near) + " · [E] ramasser"
-		_floor_label.add_theme_color_override("font_color", ItemView.RARITY_COLORS.get(near.rarity, TEXT_COLOR))
+	_update_item_label(w.items.get(GameState.hovered_item))
 	_flash_t = maxf(0.0, _flash_t - dt)
 	var k := _flash_t / FLASH_TIME
 	_wave_label.add_theme_color_override("font_color", TEXT_COLOR.lerp(FLASH_COLOR, k))
 	_wave_label.scale = Vector2.ONE * (1.0 + 0.25 * k)
 	_death_label.visible = p != null and not p.alive
+
+## The hovered item's line, centred over it in the world. The camera may live in a SubViewport
+## drawn at a lower resolution: its projection is scaled to this layer's viewport.
+func _update_item_label(it: SimItem) -> void:
+	_item_label.visible = it != null and camera != null
+	Input.set_default_cursor_shape(Input.CURSOR_POINTING_HAND if _item_label.visible else Input.CURSOR_ARROW)
+	if not _item_label.visible:
+		return
+	_item_label.text = item_line(it)
+	_item_label.add_theme_color_override("font_color", ItemView.RARITY_COLORS.get(it.rarity, TEXT_COLOR))
+	var anchor := camera.unproject_position(Vector3(it.pos.x, ITEM_LABEL_HEIGHT, it.pos.y))
+	var scale_v := get_viewport().get_visible_rect().size / camera.get_viewport().get_visible_rect().size
+	var size := _item_label.get_combined_minimum_size()
+	_item_label.position = (anchor * scale_v - Vector2(size.x * 0.5, size.y)).round()
 
 func _input(event: InputEvent) -> void:
 	if not (event is InputEventKey and event.pressed and not event.echo):

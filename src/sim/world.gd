@@ -15,7 +15,6 @@ const PACKS_MAX := 4
 const AGGRO_DELAY_MAX := 0.3   # seeded delay before a woken packmate starts chasing
 const RETURN_SPEED_MULT := 0.6 # walking-home speed, as a fraction of grunt_speed
 const HOME_EPSILON := 0.2
-const PICKUP_REACH := 0.4      # an item is taken when within player_radius + this
 # Elite affixes, each with a counter the starter hunter already has:
 #   shielded  frontal hits (within elite_shield_angle) are cut by elite_shield_reduction: flank it
 #   volatile  its corpse blasts after elite_fuse: step back or dash through; kills its own pack
@@ -330,7 +329,7 @@ func _step_inner(dt: float, cmd: Command) -> void:
 		return
 	if p.alive:
 		_step_player(dt, p, cmd)
-		_pick_up(p, cmd.interact)
+		_pick_up(p, cmd)
 	for e in entities.values():
 		if e.kind == &"grunt" and e.alive:
 			_step_grunt(dt, e, p)
@@ -705,12 +704,14 @@ func place_item(it: SimItem, pos: Vector2) -> SimItem:
 	_emit({"type": "drop", "id": it.id, "slot": it.slot, "rarity": it.rarity, "pos": it.pos})
 	return it
 
-## Interact takes the nearest armed floor item within player_radius + PICKUP_REACH into the bag
-## (inventory_full if the bag is at tuning.inventory_size: the item stays). An item dropped at
+## A click (cmd.pickup_id) takes that floor item, E (cmd.interact) the nearest one; either only
+## within player_radius + tuning.pickup_reach, and one item per tick (the click wins). Out of
+## reach, a click does nothing: the label over the item is the invitation to walk up to it.
+## inventory_full if the bag is at tuning.inventory_size: the item stays. An item dropped at
 ## the player's feet is unarmed until the player has stepped out of reach, so it is not taken
-## back by the same key press that follows. No rng here: the bag never changes the seed's path.
-func _pick_up(p: SimEntity, interact: bool) -> void:
-	var reach := p.radius + PICKUP_REACH
+## back by the same press that follows. No rng here: the bag never changes the seed's path.
+func _pick_up(p: SimEntity, cmd: Command) -> void:
+	var reach := p.radius + tuning.pickup_reach
 	var best: SimItem = null
 	var best_d := reach * reach
 	for it in items.values():
@@ -719,10 +720,17 @@ func _pick_up(p: SimEntity, interact: bool) -> void:
 			if d2 > reach * reach:
 				it.armed = true
 			continue
-		if d2 <= best_d:
+		if it.id == cmd.pickup_id:
+			if d2 <= reach * reach:
+				best = it
+				best_d = -1.0   # the clicked item beats any nearer one
+		elif best_d >= 0.0 and d2 <= best_d:
 			best = it
 			best_d = d2
-	if not interact or best == null:
+	if cmd.pickup_id > 0:
+		if best == null or best.id != cmd.pickup_id:
+			return   # clicked item out of reach, unarmed or gone: nothing
+	elif not cmd.interact or best == null:
 		return
 	if inventory.size() >= int(tuning.inventory_size):
 		_emit({"type": "inventory_full"})
@@ -730,6 +738,18 @@ func _pick_up(p: SimEntity, interact: bool) -> void:
 	items.erase(best.id)
 	inventory.append(best)
 	_emit({"type": "pickup", "id": best.id, "slot": best.slot, "rarity": best.rarity})
+
+## The floor item nearest a ground point within `radius`, or 0. The harness's cursor: the real
+## input picks under the mouse ray; capture mode hovers the item nearest --aim.
+func item_at(pos: Vector2, radius: float) -> int:
+	var best := 0
+	var best_d := radius * radius
+	for it in items.values():
+		var d2: float = it.pos.distance_squared_to(pos)
+		if d2 <= best_d:
+			best = it.id
+			best_d = d2
+	return best
 
 ## Wear an item from the bag. The slot's previous item goes back to the bag, or to the floor
 ## at the player's feet if the bag is full. Called by the UI through GameState, never by input.

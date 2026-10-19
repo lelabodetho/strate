@@ -43,6 +43,7 @@ const SPECS := [
 	["affix_t2", 0.01, 0.5, 0.01],
 	["affix_t3", 0.01, 0.5, 0.01],
 	["inventory_size", 1.0, 40.0, 1.0],
+	["pickup_reach", 0.0, 3.0, 0.05],
 	["wave_delay", 0.5, 15.0, 0.5],
 	["wave_cap", 3.0, 24.0, 1.0],
 	["pack_spacing", 0.0, 20.0, 1.0],
@@ -105,6 +106,7 @@ var affix_t1 := 0.08
 var affix_t2 := 0.15
 var affix_t3 := 0.25
 var inventory_size := 12.0     # items the bag holds; a pickup on a full bag emits inventory_full
+var pickup_reach := 0.4        # an item is taken (E or click) when within player_radius + this
 
 # Wave pacing: the arena imitates the rhythm of a zone (packs spread out, one pull at a time,
 # a breath between pulls).

@@ -4,7 +4,7 @@ extends Node3D
 ## halo and a real light (UI rule 2: rarity is light). Colour by rarity: common steel white,
 ## rare cold cyan, epic the accent orange with a stronger light and a bigger halo. Never red:
 ## red is the threat tone. On pickup it flashes and shoots up toward the HUD, then frees itself.
-## Reads only.
+## Hovered (cursor on it): the gem glows and grows a little. Reads only.
 
 const ITEM_COLOR := Color(1.0, 0.55, 0.2)   # epic; the HUD and the pickup flash use the same
 const RARITY_COLORS := {
@@ -36,10 +36,13 @@ const LIGHT_ENERGY := 1.4
 const PICKUP_TIME := 0.45
 const PICKUP_RISE := 6.0     # units climbed by the end of the pickup animation
 const FLASH_TIME := 0.1
+const HOVER_EMISSION := 1.4   # vs 0.6 at rest
+const HOVER_SCALE := 1.2
 
 var item_id: int = -1
 var color: Color = ITEM_COLOR
 var leaving: bool = false    # pickup animation in progress; the view frees itself at the end
+var hovered: bool = false
 var _light_energy := LIGHT_ENERGY
 var _halo_color: Color
 var _halo_solid := false
@@ -99,6 +102,14 @@ func setup(it: SimItem) -> void:
 
 func sync(it: SimItem) -> void:
 	position = Vector3(it.pos.x, 0.0, it.pos.y)
+
+func set_hovered(on: bool) -> void:
+	if on == hovered or leaving:
+		return
+	hovered = on
+	_gem_mat.emission_energy_multiplier = HOVER_EMISSION if on else 0.6
+	var s := HOVER_SCALE if on else 1.0
+	_gem.scale = Vector3(s, s, s)
 
 ## Called on the sim's pickup event: flash, rise toward the HUD, free.
 func pickup() -> void:

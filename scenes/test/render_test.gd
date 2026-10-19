@@ -26,6 +26,7 @@ const PLAYER_LIGHT_HEIGHT := 3.0
 	$EntityContainer/EntityVP/RoomLightA, $EntityContainer/EntityVP/RoomLightB]
 @onready var input: PlayerInput = $PlayerInput
 @onready var tuning_panel: TuningPanel = $TuningPanel
+@onready var hud: Hud = $Hud
 var inventory_panel: InventoryPanel
 
 func _ready() -> void:
@@ -33,6 +34,7 @@ func _ready() -> void:
 	add_child(inventory_panel)
 	GameState.render_scene = true
 	input.camera = cam
+	hud.camera = cam
 	var w: SimWorld = GameState.world
 	level_view.build(w.level)
 	occluder.build(w.level, true)
@@ -96,6 +98,8 @@ func _physics_process(dt: float) -> void:
 	# The bag does not pause the world, but attack / dash / E are off while it is open.
 	input.combat_locked = GameState.paused or inventory_panel.is_open()
 	GameState.step(dt, input.read())
+	GameState.set_hovered(input.hovered_item_id)
+	world_view.hovered_item = GameState.hovered_item
 	world_view.sync(GameState.world)
 
 func _input(event: InputEvent) -> void:

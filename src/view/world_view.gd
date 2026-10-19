@@ -1,7 +1,8 @@
 class_name WorldView
 extends Node3D
 ## Owns one EntityView per sim entity, one ItemView per floor item, one small mesh per
-## projectile, and short-lived feedback spawned from sim events. Reads only.
+## projectile, and short-lived feedback spawned from sim events. The scene sets hovered_item
+## (the floor item under the cursor) so its view can glow. Reads only.
 
 const PROJ_COLOR := Color(1.0, 0.8, 0.45)
 const IMPACT_COLOR := Color(1.0, 0.85, 0.6, 0.9)
@@ -16,6 +17,7 @@ const FUSE_COLOR := Color(0.9, 0.15, 0.1, 0.45)
 const BLAST_COLOR := Color(0.9, 0.15, 0.1, 0.9)
 const BLAST_TIME := 0.3
 
+var hovered_item: int = 0
 var debug: bool = false:
 	set(v):
 		debug = v
@@ -85,6 +87,7 @@ func sync(world: SimWorld) -> void:
 			add_child(iv)
 			_item_views[it.id] = iv
 		iv.sync(it)
+		iv.set_hovered(it.id == hovered_item)
 
 	if world.tick != _last_event_tick:
 		_last_event_tick = world.tick

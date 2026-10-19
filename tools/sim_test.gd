@@ -35,6 +35,7 @@ func _init() -> void:
 	test_loot_pools()
 	test_breakpoint()
 	test_item_pickup()
+	test_item_click()
 	test_equip_from_bag()
 	test_drop_from_bag()
 	test_drop_tables()
@@ -58,8 +59,9 @@ func check(cond: bool, msg: String) -> void:
 	else:
 		print("[sim_test] ok: " + msg)
 
-func cmd(move := Vector2.ZERO, aim := Vector2(0, -20), attack := false, dash := false, interact := false) -> Command:
+func cmd(move := Vector2.ZERO, aim := Vector2(0, -20), attack := false, dash := false, interact := false, pickup_id := 0) -> Command:
 	var c := Command.new()
+	c.pickup_id = pickup_id
 	c.move = move
 	c.aim = aim
 	c.attack = attack
@@ -811,7 +813,7 @@ func test_item_pickup() -> void:
 	var w := SimWorld.new(1)
 	var p := w.spawn(&"player", Vector2(0, 9))
 	var it := w.place_item(SimItem.make(&"weapon", &"common", [{"stat": "fire_rate", "tier": 1}], w.tuning), Vector2(0, 6))
-	var reach := p.radius + SimWorld.PICKUP_REACH
+	var reach := p.radius + w.tuning.pickup_reach
 	var before := w.fire_interval()
 	# Walking over it without E: nothing.
 	run(w, 1.0, cmd(Vector2(0, -1)))
@@ -844,6 +846,59 @@ func test_item_pickup() -> void:
 	w.place_item(SimItem.make(&"module", &"common", [{"stat": "player_hp", "tier": 1}], w.tuning), p.pos)
 	run(w, 0.5, cmd())
 	check(w.inventory.size() == 3, "no E, no pickup")
+
+## Click = pickup_id: that item, only within reach, beating a nearer one; E stays the nearest.
+func test_item_click() -> void:
+	var w := SimWorld.new(1)
+	var p := w.spawn(&"player", Vector2(0, 9))
+	var reach := p.radius + w.tuning.pickup_reach
+	var mk := func(slot: StringName, at: Vector2) -> SimItem:
+		return w.place_item(SimItem.make(slot, &"common", [{"stat": "player_hp", "tier": 1}], w.tuning), at)
+	var far: SimItem = mk.call(&"weapon", p.pos + Vector2(0, -(reach + 1.0)))
+	# Click out of reach: nothing, no event (the label is the invitation to walk up).
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, false, far.id))
+	check(w.items.has(far.id) and w.inventory.is_empty() and w.events.filter(func(ev): return ev.type in ["pickup", "inventory_full"]).is_empty(),
+		"click out of reach: nothing")
+	# Unknown id: nothing.
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, false, 9999))
+	check(w.inventory.is_empty(), "click on an unknown id: nothing")
+	# Two items in reach: the click takes the clicked one, not the nearest.
+	var near: SimItem = mk.call(&"armor", p.pos + Vector2(0.1, 0))
+	var clicked: SimItem = mk.call(&"module", p.pos + Vector2(reach - 0.05, 0))
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, false, clicked.id))
+	var picks := w.events.filter(func(ev): return ev.type == "pickup")
+	check(picks.size() == 1 and picks[0].id == clicked.id and w.inventory.size() == 1 and w.inventory[0] == clicked and w.items.has(near.id),
+		"click takes the clicked item, not the nearest")
+	# Click and E on the same tick: one item, the clicked one.
+	var other: SimItem = mk.call(&"module", p.pos + Vector2(-0.1, 0))
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, true, other.id))
+	check(w.inventory.size() == 2 and w.inventory[1] == other and w.items.has(near.id), "click + E same tick: only the clicked item")
+	# Click on an item just dropped at the feet (unarmed): nothing until the player steps away.
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, false, near.id))
+	check(w.inventory.size() == 3, "click on the remaining item in reach: taken")
+	var dropped_id: int = w.inventory[0].id
+	w.drop(dropped_id)
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, false, dropped_id))
+	check(w.items.has(dropped_id) and w.inventory.size() == 2, "click on a just-dropped item at the feet: unarmed, stays")
+	# Full bag: inventory_full, the item stays.
+	w.tuning.inventory_size = 2.0
+	p.pos = far.pos
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, false, far.id))
+	var full := w.events.filter(func(ev): return ev.type == "inventory_full")
+	check(full.size() == 1 and w.items.has(far.id), "click on a full bag: inventory_full, the item stays")
+	# Reach from the tuning: the panel can widen it.
+	w.tuning.inventory_size = 12.0
+	p.pos = far.pos + Vector2(0, 1.5)
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, false, far.id))
+	check(w.items.has(far.id), "1.5 away at reach %.2f: out of reach" % reach)
+	w.tuning.pickup_reach = 1.5
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, false, far.id))
+	check(not w.items.has(far.id), "pickup_reach 1.5: taken")
+	# item_at: the capture-mode cursor.
+	var a: SimItem = mk.call(&"weapon", Vector2(3, 3))
+	var b: SimItem = mk.call(&"weapon", Vector2(3.3, 3))
+	check(w.item_at(Vector2(3.2, 3), 0.6) == b.id and w.item_at(Vector2(3.0, 3.1), 0.6) == a.id and w.item_at(Vector2(10, 10), 0.6) == 0,
+		"item_at: nearest within radius, 0 when none")
 
 func test_equip_from_bag() -> void:
 	var w := SimWorld.new(1)

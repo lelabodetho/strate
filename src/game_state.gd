@@ -14,7 +14,8 @@ extends Node
 ##   --aim=x,z             world point under the cursor (default: straight down the corridor)
 ##   --hold=attack         hold the attack button
 ##   --pickup=<frame>      press interact (E) on that frame
-##   --equip=<index>       equip inventory[index] on the frame after --pickup
+##   --click=<frame>       click the hovered item on that frame (the one nearest --aim)
+##   --equip=<index>       equip inventory[index] on the frame after --pickup or --click
 ##   --dash=t1,t2,...      ticks on which dash is pressed
 ##   --restart=<frame>     call restart() on that capture frame (tests the death -> R flow)
 ##   --next=<frame>        call next_wave() on that capture frame
@@ -41,6 +42,9 @@ var preset_dirty: bool = false # a slider moved since the preset was applied
 var look := Look.new()
 var look_name: String = Look.DEFAULT_NAME
 var render_scene: bool = false   # set by render_test.gd so the HUD shows the mode
+## Floor item under the cursor, 0 if none: the scene sets it from PlayerInput each tick, the
+## HUD labels it and the view highlights it. Capture mode: the item nearest --aim.
+var hovered_item: int = 0
 var _args: Dictionary = {}
 var _frames_left: int = -1
 var _scripted: bool = false
@@ -51,6 +55,7 @@ var _frame: int = 0
 var _frozen: bool = false        # capture mode: the sim stops once the frame budget is spent
 var _restart_frame: int = -1
 var _pickup_frame: int = -1
+var _click_frame: int = -1
 var _equip_index: int = -1
 var _next_frame: int = -1
 var _reset_frame: int = -1
@@ -95,6 +100,7 @@ func _ready() -> void:
 			_dash_ticks.append(int(t))
 		_restart_frame = int(_args.get("restart", "-1"))
 		_pickup_frame = int(_args.get("pickup", "-1"))
+		_click_frame = int(_args.get("click", "-1"))
 		_equip_index = int(_args.get("equip", "-1"))
 		_next_frame = int(_args.get("next", "-1"))
 		_reset_frame = int(_args.get("reset", "-1"))
@@ -111,7 +117,7 @@ func step(dt: float, cmd: Command) -> void:
 			next_wave()
 		if _frame == _reset_frame:
 			reset_waves()
-		if _frame == _pickup_frame + 1 and _equip_index >= 0 and _equip_index < world.inventory.size():
+		if (_frame == _pickup_frame + 1 or _frame == _click_frame + 1) and _equip_index >= 0 and _equip_index < world.inventory.size():
 			world.equip(world.inventory[_equip_index].id)
 	if not paused:
 		world.step(dt, cmd)
@@ -133,6 +139,7 @@ func to_dict() -> Dictionary:
 	var d := world.to_dict()
 	d["paused"] = paused
 	d["preset"] = preset_label()
+	d["hovered_item"] = hovered_item
 	if _scripted:
 		d["recent_events"] = _recent_events
 		d["restarts"] = restarts
@@ -159,6 +166,11 @@ func equip_item(item_id: int) -> bool:
 
 func drop_item(item_id: int) -> bool:
 	return world.drop(item_id)
+
+## Scene entry point: the item under the real cursor. Ignored in capture mode (--aim decides).
+func set_hovered(item_id: int) -> void:
+	if not _scripted:
+		hovered_item = item_id
 
 func has_arg(key: String) -> bool:
 	return _args.has(key)
@@ -256,6 +268,8 @@ func _scripted_command() -> Command:
 	c.attack = String(_args.get("hold", "")).split(",").has("attack")
 	c.dash = _dash_ticks.has(world.tick + 1)
 	c.interact = _frame == _pickup_frame
+	hovered_item = world.item_at(c.aim, PlayerInput.ITEM_PICK_RADIUS)
+	c.pickup_id = hovered_item if _frame == _click_frame else 0
 	return c
 
 ## --drop=x,z[,rarity[,slot]]: a rolled item on the floor (world rng, so the seed decides it).
