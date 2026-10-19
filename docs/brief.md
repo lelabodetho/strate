@@ -2,9 +2,11 @@
 
 ## Où on en est (19/10/2026)
 
-**État** : jalons 0, 1, 2, 2b, 2c bouclés, jalon 4 entamé (élites avec affixes, loot généré avec slots / rareté / paliers). Arène de vagues jouable au preset par défaut (`tools/presets/default.json`), rendu `mix` avec langage visuel orange = joueur / rouge = menace / couleur par rareté pour le loot. 235 tests headless.
+**État** : jalons 0, 1, 2, 2b, 2c bouclés, jalon 4 entamé (élites avec affixes, loot généré avec slots / rareté / paliers, contrôles ARPG). Arène de vagues jouable au preset par défaut (`tools/presets/default.json`), rendu `mix` avec langage visuel orange = joueur / rouge = menace / couleur par rareté pour le loot. 288 tests headless.
 
 **Session du 19/10 (soir), verdicts en jeu** : **brique loot validée** (sac tel quel, ramassage à la souris : survol = étiquette, clic = ramasser, portée 1,5). Reste à valider : les élites.
+
+**Session du 19/10 (nuit)** : brique **contrôles ARPG** codée (fenêtres d'attaque, visée aimantée, caméra dans le look), à valider en jeu — voir « Jalon 4 — Contrôles ARPG ».
 
 **Ensuite** : reste du jalon 4 (paliers de difficulté, boss, éditeur de zone).
 
@@ -327,6 +329,26 @@ Un item doit changer un **breakpoint**, pas une moyenne : 22 dégâts contre 80 
 **Verdicts du 19/10 (soir)** : le sac coupe un peu le rythme, mais c'est le rythme attendu d'un ARPG : on ne change pas d'équipement en combat, on tue, puis on loot et on s'équipe. **Sac validé tel quel, pas d'« équiper direct » sur E long.** Le ramassage pendant un pack est rare, donc inutile de rendre E plus large ; le vrai moment de lecture d'un item est le calme après la vague, à la souris → tooltip au-dessus de l'item et clic pour ramasser (fait, ci-dessus).
 
 **Verdict final du 19/10 (soir) : la partie loot est validée.** Questions laissées ouvertes, à rouvrir seulement si le jeu les pose : les flèches ▲ / ▼ ou le delta chiffré ; les +8 % contre le T2 ; la part de reliques (30 % par élite, une élite toutes les 2 vagues) est-elle assez rare pour compter ; faut-il une rareté au-dessus de relique avant les boss ou plutôt un affixe à effet (jalon 4, suite).
+
+### Jalon 4 — Contrôles ARPG (troisième brique, bouclée le 19/10/2026, à valider en jeu)
+
+Le feel d'un coup d'ARPG tient à l'engagement : on appuie, le corps s'arme, le coup part, on encaisse la recovery. Avant cette brique, le tir était un cooldown plat (`fire_interval`) et le curseur une visée brute.
+
+**Ce qui a changé**
+- [x] **Fenêtre d'attaque dans la sim** (`SimWorld.attack_phase` / `attack_t`) : windup (engagé, rien n'est parti) → hit (la balle naît, le cône ou le blast résout, i-frames de la brute) → recovery (pas de nouvelle attaque). Windup / recovery sont l'**identité absolue du profil** (`WeaponProfile` : hunter 0,12 / 0,30 = 0,42 s par tir, brute 0,22 / 0,45 = 0,67 s, technomancer 0,30 / 0,55 = 0,85 s), plus un multiplicateur de cadence dans les mods. `fire_interval` sort du tuning (et de tous les presets) ; `SimWorld.fire_interval()` reste comme valeur dérivée (HUD « cadence 0,42 s »). La stat `fire_rate` (items, base 1) divise toute la fenêtre : +12 % de vitesse d'attaque raccourcit windup et recovery ensemble.
+- [x] **Maintien = réenchaînement** à la fin de la recovery, jamais avant (réappuyer pendant la recovery ne change rien). Le **dash annule** windup (tir perdu) et recovery ; tir maintenu, le windup repart dès la fin du dash (le dash possède tout son dernier tick). Changer de profil annule la fenêtre.
+- [x] **`attack_move_mult` à 0,25** (`default.json`, `E_starter_arpg`) pendant toute la fenêtre, **pour les trois profils** (le technomancer ne bouge plus librement en tirant : chaque profil s'engage). La fente de la brute joue sur les 0,15 premières secondes de la recovery, le pilotage à 0,25× par-dessus.
+- [x] Événement `windup` (`id`, `profile`). View : le joueur gonfle (×1,15) et s'éclaircit (orange, jamais rouge) pendant le windup, se tasse (×0,94) pendant la recovery. État dumpé : `attack` {phase, t, windup, recovery}.
+- [x] **Visée aimantée (D4)** : `target_snap_radius` 1,5 dans le tuning. `SimWorld.target_at(point)` : grunt vivant dont le centre est à moins du rayon du point curseur ; à plusieurs, le cercle de hit le plus proche du curseur gagne (une élite large bat un grunt mince à distance de centre égale). `PlayerInput` et le harnais remplissent `Command.target_id` avec cette règle chaque tick ; la sim **valide** l'id (vivant, pas le joueur) et oriente le facing vers la position de la cible à l'instant du hit : balle du hunter, projectile du technomancer et cône de la brute vont à la cible, au curseur sinon. Pas de guidage après le départ. `SimWorld.target_id` dans l'état ; anneau DANGER fin (largeur 0,04) aux pieds de la cible.
+- [x] **Caméra dans le look** (pas dans le tuning) : `camera_pitch` 50° (30–65) et `camera_size` 24 (14–34), deux sliders dans le bloc « rendu », sauvés dans `look_default.json`. `render_test` les applique chaque frame à la caméra monde (yaw iso 45° gardé, l'orientation ne lerpe pas) et les copie sur la caméra entités. Le harnais `harness.tscn` garde sa caméra fixe.
+- [x] Harnais : `--target=<id>` force la cible, sinon `--aim` aimante comme en jeu ; `--grunt=x,z` / `--grunt2` posent un grunt à la main. 43 checks de plus (288) : hits à exactement windup puis windup + recovery + windup pour les trois profils (pas à 10 ms), dash à mi-windup = pas de projectile, dash en recovery = idle immédiat, `fire_rate` ×1,5 = 0,08 / 0,20, réappui en recovery sans effet ; cible à 1,2 oui / 1,8 non, le plus proche gagne, id mort / inconnu / joueur ignoré, la balle touche la cible avec le curseur à 1,0 du centre et rate sans aimant, cône et projectile vers la cible ; déterminisme inchangé.
+
+**À valider en jeu**
+- Le hunter à 0,42 s par tir avec 0,25× de déplacement : le coup se sent-il engagé sans être mou ? Si c'est mou, raccourcir la recovery avant le windup (le windup est la lisibilité, la recovery le poids).
+- Le dash qui perd le tir en windup : punition juste ou frustration ? Alternative si frustrant : le dash n'annule que la recovery.
+- La brute à 0,22 de windup + 0,45 : la fente arrive-t-elle encore sur un grunt qui s'approche ? Le technomancer ralenti à 0,25× pendant 0,85 s est-il jouable ou faut-il lui rendre son déplacement libre (c'était son identité) ?
+- L'aimant à 1,5 : trop collant dans un pack serré (on ne choisit plus sa cible) ou juste ? L'anneau fin se lit-il sous le rendu `mix` ?
+- Caméra 50° / 24 : lisibilité des hauteurs (murs fantômes, grunts derrière un pilier) contre l'échelle du perso. Ajuster au slider, sauver le look.
 
 ### Jalon 4 — Contenu
 
