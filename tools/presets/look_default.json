@@ -1,11 +1,14 @@
 {
+  "ambient_energy": 0.9,
   "camera_pitch": 50.0,
   "camera_size": 24.0,
   "cold_light_energy": 2.0,
   "dither": 0.5,
+  "dither_low": 0.06,
   "mode": "mix",
   "player_light_color": "ffd6a3",
   "player_light_energy": 2.0,
   "scanlines": 0.5,
+  "shadow_blur": 1.5,
   "viewport_scale": 2
 }

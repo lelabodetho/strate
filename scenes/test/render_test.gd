@@ -7,6 +7,7 @@ extends Node
 ##             level drawn unshaded in the key colour (correct occlusion, keyed out by the
 ##             filter) and copies of the lights so both layers are lit the same.
 ## Lights: a warm omni that follows the player, two cold omnis fixed in the room, shadows on.
+## Ambient energy, omni shadow blur and the mix filter's low dither bound come from the look.
 ## Camera: orthographic iso (45-degree yaw), pitch and size from the look, applied every frame
 ## to the world camera and copied to the entity camera.
 
@@ -19,6 +20,7 @@ const PLAYER_LIGHT_HEIGHT := 3.0
 @onready var entity_container: SubViewportContainer = $EntityContainer
 @onready var world_vp: SubViewport = $WorldContainer/WorldVP
 @onready var entity_vp: SubViewport = $EntityContainer/EntityVP
+@onready var world_env: WorldEnvironment = $WorldContainer/WorldVP/WorldEnvironment
 @onready var cam: Camera3D = $WorldContainer/WorldVP/Camera3D
 @onready var entity_cam: Camera3D = $EntityContainer/EntityVP/EntityCam
 @onready var level_view: LevelView = $WorldContainer/WorldVP/LevelView
@@ -82,6 +84,7 @@ func _apply_look() -> void:
 	var m := world_container.material as ShaderMaterial
 	m.set_shader_parameter("mode", look.mode_index())
 	m.set_shader_parameter("dither_strength", look.dither)
+	m.set_shader_parameter("dither_low", look.dither_low)
 	m.set_shader_parameter("scanlines", look.scanlines)
 	var e := entity_container.material as ShaderMaterial
 	e.set_shader_parameter("mode", 0)
@@ -96,6 +99,11 @@ func _apply_look() -> void:
 		l.light_energy = look.player_light_energy
 	for l in cold_lights:
 		l.light_energy = look.cold_light_energy
+	for l in player_lights + cold_lights:
+		l.shadow_blur = look.shadow_blur
+	for env in [world_env.environment, entity_cam.environment]:
+		if env != null:
+			env.ambient_light_energy = look.ambient_energy
 
 func _process(dt: float) -> void:
 	cam.position = cam.position.lerp(_cam_target(), 1.0 - exp(-CAM_SMOOTH * dt))

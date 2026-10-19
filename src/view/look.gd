@@ -14,6 +14,9 @@ const SPECS := [
 	["cold_light_energy", 0.0, 6.0, 0.1],
 	["camera_pitch", 30.0, 65.0, 1.0],
 	["camera_size", 14.0, 34.0, 1.0],
+	["ambient_energy", 0.2, 1.5, 0.05],
+	["shadow_blur", 0.0, 3.0, 0.1],
+	["dither_low", 0.0, 0.2, 0.01],
 ]
 const DIR := "res://tools/presets"
 const DEFAULT_NAME := "default"
@@ -27,6 +30,9 @@ var player_light_energy := 2.0
 var cold_light_energy := 2.0
 var camera_pitch := 50.0      # degrees above the ground plane; the yaw stays the 45-degree iso
 var camera_size := 24.0       # orthographic height of the view, in world units
+var ambient_energy := 0.9     # ambient light of both worlds' environments
+var shadow_blur := 1.5        # OmniLight3D.shadow_blur on every omni of both worlds
+var dither_low := 0.06        # mix: luminance under which the Bayer jitter stops (raise it to leave shadows flat, lower it to dither them)
 
 static func path(name: String) -> String:
 	return DIR.path_join("look_" + name + ".json")
