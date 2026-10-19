@@ -92,7 +92,7 @@ func _ready() -> void:
 	weapon_row.add_child(_weapons)
 
 	# Look (render_test scene only; F cycles the mode). View-side settings, not sim tuning:
-	# filter mode, dither, scanlines, viewport scale, lights. Saved as tools/presets/look_<name>.json.
+	# filter mode, dither, scanlines, viewport scale, lights, camera. Saved as tools/presets/look_<name>.json.
 	var look_title := Label.new()
 	look_title.text = "rendu"
 	vbox.add_child(look_title)
@@ -126,6 +126,8 @@ func _ready() -> void:
 	color_row.add_child(_look_color)
 	_look_slider(vbox, "player_light_energy", "lampe joueur énergie")
 	_look_slider(vbox, "cold_light_energy", "lampes froides énergie")
+	_look_slider(vbox, "camera_pitch", "caméra inclinaison °")
+	_look_slider(vbox, "camera_size", "caméra taille")
 	var look_row3 := HBoxContainer.new()
 	vbox.add_child(look_row3)
 	_look_name = LineEdit.new()

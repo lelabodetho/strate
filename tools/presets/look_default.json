@@ -1,4 +1,6 @@
 {
+  "camera_pitch": 50.0,
+  "camera_size": 24.0,
   "cold_light_energy": 2.0,
   "dither": 0.5,
   "mode": "mix",

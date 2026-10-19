@@ -7,8 +7,11 @@ extends Node
 ##             level drawn unshaded in the key colour (correct occlusion, keyed out by the
 ##             filter) and copies of the lights so both layers are lit the same.
 ## Lights: a warm omni that follows the player, two cold omnis fixed in the room, shadows on.
+## Camera: orthographic iso (45-degree yaw), pitch and size from the look, applied every frame
+## to the world camera and copied to the entity camera.
 
-const CAM_OFFSET := Vector3(12, 12, 12)
+const CAM_DIST := 30.0        # orthographic: only the near/far window depends on it
+const CAM_YAW := PI / 4
 const CAM_SMOOTH := 8.0
 const PLAYER_LIGHT_HEIGHT := 3.0
 
@@ -41,6 +44,7 @@ func _ready() -> void:
 	world_view.debug = GameState.debug
 	world_view.sync(w)
 	cam.position = _cam_target()
+	_apply_camera()
 	_sync_cameras()
 	_apply_look()
 	GameState.capturing.connect(_dump_viewports)
@@ -50,11 +54,20 @@ func _dump_viewports(base: String) -> void:
 	world_vp.get_texture().get_image().save_png(base + "_world.png")
 	entity_vp.get_texture().get_image().save_png(base + "_entities.png")
 
+## Direction from the looked-at ground point to the camera, for the look's pitch.
+func _cam_offset() -> Vector3:
+	var pitch := deg_to_rad(GameState.look.camera_pitch)
+	return Vector3(sin(CAM_YAW) * cos(pitch), sin(pitch), cos(CAM_YAW) * cos(pitch)) * CAM_DIST
+
 func _cam_target() -> Vector3:
 	var p: SimEntity = GameState.world.player()
-	if p == null:
-		return CAM_OFFSET
-	return Vector3(p.pos.x, 0.0, p.pos.y) + CAM_OFFSET
+	var ground := Vector3.ZERO if p == null else Vector3(p.pos.x, 0.0, p.pos.y)
+	return ground + _cam_offset()
+
+## Pitch and size from the look; the orientation never lerps, only the position does.
+func _apply_camera() -> void:
+	cam.basis = Basis.looking_at(-_cam_offset().normalized(), Vector3.UP)
+	cam.size = GameState.look.camera_size
 
 func _sync_cameras() -> void:
 	entity_cam.global_transform = cam.global_transform
@@ -86,6 +99,7 @@ func _apply_look() -> void:
 
 func _process(dt: float) -> void:
 	cam.position = cam.position.lerp(_cam_target(), 1.0 - exp(-CAM_SMOOTH * dt))
+	_apply_camera()
 	_sync_cameras()
 	var p: SimEntity = GameState.world.player()
 	if p != null:
