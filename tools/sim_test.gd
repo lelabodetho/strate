@@ -32,6 +32,7 @@ func _init() -> void:
 	test_stats_mods()
 	test_item_drop()
 	test_item_roll()
+	test_loot_pools()
 	test_breakpoint()
 	test_item_pickup()
 	test_equip_swap()
@@ -691,7 +692,7 @@ func test_item_roll() -> void:
 	var neg_seen := 0
 	var tiers := [0, 0, 0]
 	for i in 300:
-		var m := SimItem.roll(mod_rng, &"epic", &"module", t)
+		var m := SimItem.roll(mod_rng, &"rare", &"module", t)
 		for a in m.affixes:
 			tiers[a.tier - 1] += 1
 			if a.stat == "dash_cooldown":
@@ -701,7 +702,7 @@ func test_item_roll() -> void:
 	check(neg_seen > 0, "rolled dash_cooldown affixes are all negative (%d seen)" % neg_seen)
 	var total := float(tiers[0] + tiers[1] + tiers[2])
 	check(tiers[0] / total > 0.42 and tiers[0] / total < 0.58 and tiers[2] / total > 0.09 and tiers[2] / total < 0.21,
-		"tiers over 900 affixes near 50/35/15 (%d/%d/%d)" % tiers)
+		"rare: tiers over 600 affixes near 50/35/15 (%d/%d/%d)" % tiers)
 	var r1 := RandomNumberGenerator.new()
 	r1.seed = 77
 	var r2 := RandomNumberGenerator.new()
@@ -709,6 +710,67 @@ func test_item_roll() -> void:
 	var i1 := SimItem.roll(r1, &"epic", &"weapon", t)
 	var i2 := SimItem.roll(r2, &"epic", &"weapon", t)
 	check(JSON.stringify(i1.to_dict()) == JSON.stringify(i2.to_dict()), "same seed, same item")
+
+func test_loot_pools() -> void:
+	var t := SimTuning.new()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 31
+	# No dead affix: knockback and proj_speed never roll, whatever the slot or rarity.
+	var dead := 0
+	var tiers := {&"common": [0, 0, 0], &"rare": [0, 0, 0], &"epic": [0, 0, 0]}
+	var n := 0
+	for i in 500:
+		var slot: StringName = SimItem.SLOTS[i % 3]
+		var rarity: StringName = SimItem.RARITIES[(i / 3) % 3]
+		var it := SimItem.roll(rng, rarity, slot, t)
+		n += 1
+		for a in it.affixes:
+			if a.stat == "knockback" or a.stat == "proj_speed":
+				dead += 1
+			tiers[rarity][a.tier - 1] += 1
+	check(n == 500 and dead == 0, "500 items: knockback / proj_speed never rolled")
+	check(tiers[&"common"][2] == 0 and tiers[&"common"][0] > 0 and tiers[&"common"][1] > 0,
+		"common: T1–T2 only (%s)" % str(tiers[&"common"]))
+	check(tiers[&"epic"][0] == 0 and tiers[&"epic"][1] > 0 and tiers[&"epic"][2] > 0,
+		"epic: never T1 (%s)" % str(tiers[&"epic"]))
+	check(tiers[&"rare"][0] > 0 and tiers[&"rare"][1] > 0 and tiers[&"rare"][2] > 0, "rare: T1–T3 (%s)" % str(tiers[&"rare"]))
+	var e: Array = tiers[&"epic"]
+	var e_t2 := float(e[1]) / float(e[1] + e[2])
+	check(e_t2 > 0.5 and e_t2 < 0.7, "epic tiers near 60/40 (%.2f T2)" % e_t2)
+	# Role guarantee: 200 rare/epic weapons carry damage or fire rate, armors hp or damage taken.
+	var weapons_ok := 0
+	var armors_ok := 0
+	var distinct_ok := 0
+	for i in 200:
+		var rarity: StringName = &"rare" if i % 2 == 0 else &"epic"
+		var w := SimItem.roll(rng, rarity, &"weapon", t)
+		var a := SimItem.roll(rng, rarity, &"armor", t)
+		var w_role: String = w.affixes[0].stat
+		var a_role: String = a.affixes[0].stat
+		if w_role == "proj_damage" or w_role == "fire_rate":
+			weapons_ok += 1
+		if a_role == "player_hp" or a_role == "damage_taken":
+			armors_ok += 1
+		var ws := w.affixes.map(func(x): return x.stat)
+		var as_ := a.affixes.map(func(x): return x.stat)
+		if ws.size() == SimItem.AFFIX_COUNT[rarity] and as_.size() == SimItem.AFFIX_COUNT[rarity]:
+			var wd := {}
+			for x in ws:
+				wd[x] = true
+			var ad := {}
+			for x in as_:
+				ad[x] = true
+			if wd.size() == ws.size() and ad.size() == as_.size():
+				distinct_ok += 1
+	check(weapons_ok == 200, "200 rare/epic weapons: first affix is damage or fire rate (%d)" % weapons_ok)
+	check(armors_ok == 200, "200 rare/epic armors: first affix is hp or damage taken (%d)" % armors_ok)
+	check(distinct_ok == 200, "role + remaining affixes stay distinct and complete (%d)" % distinct_ok)
+	# A common weapon has no role guarantee: player_speed shows up alone over many rolls.
+	var speed_alone := 0
+	for i in 200:
+		if SimItem.roll(rng, &"common", &"weapon", t).affixes[0].stat == "player_speed":
+			speed_alone += 1
+	check(speed_alone > 30, "common weapons are unconstrained (%d of 200 roll speed)" % speed_alone)
 
 ## Shots landed on a grunt before it dies, with a proj_damage weapon of that tier on the
 ## default preset's numbers (22 damage, 80 hp).
@@ -770,7 +832,7 @@ func test_equip_swap() -> void:
 	var base_rate := w.player_stats.value("fire_rate")
 	var base_dmg := w.player_stats.value("proj_damage")
 	var a := w.place_item(SimItem.make(&"weapon", &"common", [{"stat": "fire_rate", "tier": 1}], w.tuning), Vector2(0, 6))
-	var b := w.place_item(SimItem.make(&"weapon", &"rare", [{"stat": "proj_damage", "tier": 2}, {"stat": "knockback", "tier": 1}], w.tuning), Vector2(0, 4))
+	var b := w.place_item(SimItem.make(&"weapon", &"rare", [{"stat": "proj_damage", "tier": 2}, {"stat": "player_speed", "tier": 1}], w.tuning), Vector2(0, 4))
 	var swap_pos := Vector2.ZERO
 	var ticks := 0
 	while w.equipped.get(&"weapon") != b and ticks < 120:
