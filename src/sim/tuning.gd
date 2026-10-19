@@ -34,6 +34,16 @@ const SPECS := [
 	["aggro_drop_mult", 1.0, 4.0, 0.1],
 	["provoke_time", 0.0, 15.0, 0.5],
 	["item_drop_chance", 0.0, 1.0, 0.05],
+	["elite_from_wave", 0.0, 20.0, 1.0],
+	["elite_hp_mult", 1.0, 10.0, 0.5],
+	["elite_damage_mult", 1.0, 5.0, 0.1],
+	["elite_body_mult", 1.0, 2.0, 0.05],
+	["elite_shield_reduction", 0.0, 1.0, 0.05],
+	["elite_shield_angle", 30.0, 360.0, 10.0],
+	["elite_fuse", 0.1, 3.0, 0.1],
+	["elite_blast_radius", 0.5, 6.0, 0.25],
+	["elite_blast_damage_mult", 0.0, 5.0, 0.25],
+	["elite_fast_mult", 1.0, 3.0, 0.1],
 ]
 
 # Player
@@ -72,6 +82,19 @@ var provoke_time := 4.0        # a hit grunt ignores the leash for this long, re
 
 # Loot
 var item_drop_chance := 0.2    # chance a dying grunt leaves an item on the floor
+
+# Elites: one per wave from elite_from_wave (0 = never), leading a pack. Tougher body, and one
+# affix (two from SimWorld.ELITE_SECOND_AFFIX_WAVE) that each have a counter the starter owns.
+var elite_from_wave := 2.0
+var elite_hp_mult := 3.0
+var elite_damage_mult := 1.5
+var elite_body_mult := 1.2          # radius and hit radius
+var elite_shield_reduction := 0.7   # shielded: frontal hits lose this fraction of damage and knockback
+var elite_shield_angle := 120.0     # shielded: full width of the frontal cone, degrees (counter: flank)
+var elite_fuse := 0.6               # volatile: seconds between the kill and the blast (counter: step back, dash)
+var elite_blast_radius := 2.0
+var elite_blast_damage_mult := 2.0  # volatile: blast damage = grunt_damage × this
+var elite_fast_mult := 1.6          # fast: chase speed × this (counter: distance, dash)
 
 static func keys() -> PackedStringArray:
 	var out := PackedStringArray()

@@ -33,6 +33,11 @@ func _init() -> void:
 	test_item_drop()
 	test_item_pickup()
 	test_items_persist()
+	test_elite_spawn()
+	test_shielded()
+	test_volatile()
+	test_fast()
+	test_elite_drop()
 	print("[sim_test] ", "OK" if failures == 0 else "FAILED (%d)" % failures)
 	quit(1 if failures > 0 else 0)
 
@@ -690,3 +695,146 @@ func test_items_persist() -> void:
 	w.set_weapon("brute")
 	w.reset_run()
 	check(w.weapon.name == "brute" and is_equal_approx(w.fire_interval(), base * 0.5 / 0.15), "0 keeps the weapon profile and its mods")
+
+func _elites(w: SimWorld) -> Array:
+	return w.entities.values().filter(func(e): return e.kind == &"grunt" and e.elite)
+
+func test_elite_spawn() -> void:
+	var w := SimWorld.new(7)
+	w.begin()
+	check(_elites(w).is_empty(), "wave 1 has no elite")
+	w.start_wave(2)
+	var el := _elites(w)
+	check(el.size() == 1, "wave 2 has exactly one elite (%d)" % el.size())
+	if el.size() != 1:
+		return
+	var e: SimEntity = el[0]
+	var mates := w.entities.values().filter(func(g): return g.kind == &"grunt" and g.pack == e.pack)
+	check(mates.size() >= 2 and e.pack >= 0, "the elite leads a pack of %d" % mates.size())
+	check(is_equal_approx(e.hp_max, w.tuning.grunt_hp * 3.0) and e.hp == e.hp_max, "elite hp_max = grunt_hp × 3 (%.0f)" % e.hp_max)
+	check(is_equal_approx(e.radius, w.tuning.grunt_radius * 1.2) and is_equal_approx(e.hit_radius, w.tuning.grunt_hit_radius * 1.2), "elite body × 1.2")
+	check(e.affixes.size() == 1 and SimWorld.AFFIXES.has(e.affixes[0]), "wave 2 elite has one affix (%s)" % [e.affixes])
+	w.start_wave(5)
+	var e5: SimEntity = _elites(w)[0]
+	check(_elites(w).size() == 1 and e5.affixes.size() == 2 and e5.affixes[0] != e5.affixes[1], "wave 5 elite has two distinct affixes (%s)" % [e5.affixes])
+	# Seeded: same path of waves, same elite.
+	var a := SimWorld.new(7)
+	a.begin()
+	a.start_wave(2)
+	a.start_wave(5)
+	var ea: SimEntity = _elites(a)[0]
+	check(ea.pos == e5.pos and ea.affixes == e5.affixes, "same seed = same elite and affixes")
+	# Off: never, and the wave's grunt positions are identical with elites on and off (the elite
+	# draw happens after placement; later waves diverge since the rng moved on).
+	var on := SimWorld.new(7)
+	on.begin()
+	on.start_wave(2)
+	var off := SimWorld.new(7)
+	off.tuning.elite_from_wave = 0.0
+	off.begin()
+	off.start_wave(2)
+	check(_elites(off).is_empty(), "elite_from_wave = 0: never")
+	check(_grunt_positions(off) == _grunt_positions(on) and _elites(on).size() == 1, "grunt positions identical with elites on and off")
+
+func _bullet_from(w: SimWorld, target: SimEntity, from: Vector2) -> float:
+	# Direct damage() call standing in for a bullet flying from `from` into the target.
+	var before := target.hp
+	w.events.clear()
+	w.damage(target.id, 10.0, (target.pos - from).normalized(), 0.0)
+	return before - target.hp
+
+func test_shielded() -> void:
+	var w := SimWorld.new(1)
+	w.spawn(&"player", Vector2(0, 9))
+	var e := w.spawn_elite(Vector2(0, 0), [&"shielded"])
+	e.state = &"recover"
+	e.state_t = 100.0
+	e.facing = Vector2(0, 1)   # facing the player (z+)
+	var taken := _bullet_from(w, e, Vector2(0, 9))
+	var blocked := w.events.filter(func(ev): return ev.type == "blocked" and ev.target == e.id)
+	check(is_equal_approx(taken, 3.0) and blocked.size() == 1, "frontal bullet: 10 × 0.3 = %.1f and a blocked event" % taken)
+	taken = _bullet_from(w, e, Vector2(0, -9))
+	blocked = w.events.filter(func(ev): return ev.type == "blocked")
+	check(is_equal_approx(taken, 10.0) and blocked.is_empty(), "bullet from behind: full damage, no event")
+	taken = _bullet_from(w, e, Vector2(9, 0.5))   # ~87 degrees off the facing: outside the 120 cone
+	check(is_equal_approx(taken, 10.0), "bullet from the flank: full damage")
+	var before := e.hp
+	w.damage(e.id, 10.0)
+	check(is_equal_approx(before - e.hp, 10.0), "dir ZERO: full damage")
+	# Knockback is reduced too.
+	var z0 := e.pos.y
+	w.damage(e.id, 1.0, Vector2(0, -1))
+	check(absf((z0 - e.pos.y) - w.tuning.knockback * 0.3) < 0.001, "frontal knockback × 0.3 (%.2f)" % (z0 - e.pos.y))
+
+func test_volatile() -> void:
+	var w := SimWorld.new(1)
+	var p := w.spawn(&"player", Vector2(0, 9))
+	var e := w.spawn_elite(Vector2(0, 8), [&"volatile"])   # 1.0 from the player
+	w.damage(e.id, e.hp_max)
+	var fuse := w.events.filter(func(ev): return ev.type == "fuse" and ev.id == e.id)
+	check(not e.alive and fuse.size() == 1 and p.hp == p.hp_max and is_equal_approx(e.fuse_t, w.tuning.elite_fuse),
+		"kill: fuse event, no damage yet, corpse counts down from %.1f s" % e.fuse_t)
+	var blasts := _events_of(w, "blast", w.tuning.elite_fuse - 0.05, cmd())
+	check(blasts.is_empty() and p.hp == p.hp_max, "nothing before the fuse runs out")
+	blasts = _events_of(w, "blast", 0.1, cmd())
+	check(blasts.size() == 1 and is_equal_approx(blasts[0].radius, w.tuning.elite_blast_radius), "blast event at the end of the fuse")
+	check(is_equal_approx(p.hp_max - p.hp, w.tuning.grunt_damage * 2.0), "player at 1.0 loses grunt_damage × 2 (%.0f)" % (p.hp_max - p.hp))
+	check(p.pos.y > 9.0, "pushed away from the blast (z=%.2f)" % p.pos.y)
+	# Out of range: nothing.
+	var w2 := SimWorld.new(1)
+	var p2 := w2.spawn(&"player", Vector2(0, 9))
+	var e2 := w2.spawn_elite(Vector2(0, 6), [&"volatile"])   # 3.0 away
+	w2.damage(e2.id, e2.hp_max)
+	var b2 := _events_of(w2, "blast", w2.tuning.elite_fuse + 0.1, cmd())
+	check(b2.size() == 1 and p2.hp == p2.hp_max, "at 3.0: the blast misses")
+	# Dash through at blast time: dodged.
+	var w3 := SimWorld.new(1)
+	var p3 := w3.spawn(&"player", Vector2(0, 9))
+	var e3 := w3.spawn_elite(Vector2(0, 8), [&"volatile"])
+	w3.damage(e3.id, e3.hp_max)
+	run(w3, w3.tuning.elite_fuse - 0.1, cmd())
+	w3.step(DT, cmd(Vector2(0, -1), Vector2(0, -20), false, true))
+	var b3 := _events_of(w3, "blast", 0.2, cmd(Vector2(0, -1)))
+	check(b3.size() == 1 and w3.stats.dodged == 1 and p3.hp == p3.hp_max, "dashing through the blast dodges it")
+	# Grunts take the blast too: a volatile elite killed inside its pack clears it.
+	var w4 := SimWorld.new(1)
+	w4.spawn(&"player", Vector2(0, 20))
+	var e4 := w4.spawn_elite(Vector2(0, 0), [&"volatile"])
+	var m1 := _still_grunt(w4, Vector2(1.5, 0))
+	var m2 := _still_grunt(w4, Vector2(0, -1.5))
+	var far := _still_grunt(w4, Vector2(0, 3.0))
+	w4.damage(e4.id, e4.hp_max)
+	run(w4, w4.tuning.elite_fuse + 0.1, cmd())
+	var expected := w4.tuning.grunt_damage * 2.0
+	check(is_equal_approx(m1.hp_max - m1.hp, expected) and is_equal_approx(m2.hp_max - m2.hp, expected), "packmates at 1.5 take grunt_damage × 2 (%.0f)" % (m1.hp_max - m1.hp))
+	check(far.hp == far.hp_max, "packmate at 3.0 is spared")
+	check(m1.pos.x > 1.5 and m2.pos.y < -1.5, "packmates are pushed away")
+
+func test_fast() -> void:
+	var w := SimWorld.new(1)
+	w.spawn(&"player", Vector2(0, 9))
+	var e := w.spawn_elite(Vector2(0, -20), [&"fast"])
+	e.state = &"chase"
+	e.provoked_t = 100.0
+	var z0 := e.pos.y
+	run(w, 0.5, cmd())
+	var v := (e.pos.y - z0) / 0.5
+	check(absf(v - w.tuning.grunt_speed * 1.6) < 0.05, "fast elite chases at grunt_speed × 1.6 (%.2f)" % v)
+	e.state = &"return"
+	e.provoked_t = 0.0
+	e.spawn_pos = Vector2(0, -40)
+	w.tuning.grunt_aggro = 1.0
+	z0 = e.pos.y
+	run(w, 0.5, cmd())
+	v = (z0 - e.pos.y) / 0.5
+	check(absf(v - w.tuning.grunt_speed * SimWorld.RETURN_SPEED_MULT) < 0.05, "return walk unchanged (%.2f)" % v)
+
+func test_elite_drop() -> void:
+	var w := SimWorld.new(1)
+	w.spawn(&"player", Vector2(0, 9))
+	w.tuning.item_drop_chance = 0.0
+	var e := w.spawn_elite(Vector2(0, -20), [&"fast"])
+	w.damage(e.id, e.hp_max)
+	check(w.items.size() == 1, "an elite always drops")
+	_kill_grunts(w, 20)
+	check(w.items.size() == 1, "chance 0: 20 grunts drop nothing more")

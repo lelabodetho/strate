@@ -18,6 +18,12 @@ const AGGRO_DELAY_MAX := 0.3   # seeded delay before a woken packmate starts cha
 const RETURN_SPEED_MULT := 0.6 # walking-home speed, as a fraction of grunt_speed
 const HOME_EPSILON := 0.2
 const PICKUP_REACH := 0.4      # an item is taken when within player_radius + this
+# Elite affixes, each with a counter the starter hunter already has:
+#   shielded  frontal hits (within elite_shield_angle) are cut by elite_shield_reduction: flank it
+#   volatile  its corpse blasts after elite_fuse: step back or dash through; kills its own pack
+#   fast      chases at grunt_speed × elite_fast_mult: keep distance, dash past
+const AFFIXES: Array[StringName] = [&"shielded", &"volatile", &"fast"]
+const ELITE_SECOND_AFFIX_WAVE := 5
 
 var seed: int
 var level: SimLevel
@@ -52,6 +58,9 @@ var picked_items: Array[SimItem] = [] # what the player carries, in pickup order
 # {type:"swing", pos, dir} {type:"explosion", pos, radius} {type:"stagger", target}
 # {type:"aggro", id} {type:"deaggro", id} {type:"drop", id, kind, pos}
 # {type:"pickup", id, kind, pos, mods}
+# {type:"blocked", target, pos, dir}   shielded elite took a frontal hit
+# {type:"fuse", id, pos, radius, time} volatile elite died, blast in `time`
+# {type:"blast", pos, radius}          the corpse blew up
 var events: Array[Dictionary] = []
 
 # Dash state (player only for now)
@@ -100,6 +109,41 @@ func start_wave(n: int) -> void:
 			var g := spawn(&"grunt", pos)
 			g.pack = pack_i
 			placed.append(pos)
+	# One elite per wave, leading a seeded pack. Drawn after every placement so toggling
+	# elites never moves a grunt.
+	if tuning.elite_from_wave > 0.0 and n >= int(tuning.elite_from_wave) and not sizes.is_empty():
+		var lead_pack := rng.randi_range(0, sizes.size() - 1)
+		var affixes: Array[StringName] = []
+		var pool := AFFIXES.duplicate()
+		var count_affixes := 2 if n >= ELITE_SECOND_AFFIX_WAVE else 1
+		for i in mini(count_affixes, pool.size()):
+			affixes.append(pool.pop_at(rng.randi_range(0, pool.size() - 1)))
+		for e in entities.values():
+			if e.kind == &"grunt" and e.pack == lead_pack:
+				make_elite(e, affixes)
+				break
+
+## Turn a grunt into an elite: tougher, bigger, refilled, with its affixes.
+func make_elite(g: SimEntity, affixes: Array[StringName]) -> void:
+	g.elite = true
+	g.affixes = affixes.duplicate()
+	g.hp_max = tuning.grunt_hp * tuning.elite_hp_mult
+	g.hp = g.hp_max
+	g.radius = tuning.grunt_radius * tuning.elite_body_mult
+	g.hit_radius = tuning.grunt_hit_radius * tuning.elite_body_mult
+
+## Hand-placed elite, for the harness and the tests.
+func spawn_elite(pos: Vector2, affixes: Array[StringName]) -> SimEntity:
+	var g := spawn(&"grunt", pos)
+	make_elite(g, affixes)
+	return g
+
+func elites() -> Array[SimEntity]:
+	var out: Array[SimEntity] = []
+	for e in entities.values():
+		if e.kind == &"grunt" and e.elite:
+			out.append(e)
+	return out
 
 ## Split `count` into packs of PACK_MIN..PACK_MAX, PACKS_MIN..PACKS_MAX of them when the
 ## count allows it; otherwise as close as possible (3 grunts = one pack of 3).
@@ -252,6 +296,7 @@ func step(dt: float, cmd: Command) -> void:
 	for e in entities.values():
 		if e.kind == &"grunt" and e.alive:
 			_step_grunt(dt, e, p)
+	_step_fuses(dt)
 	_separate()
 	_step_projectiles(dt)
 	if next_wave_t > 0.0 and p.alive:
@@ -453,12 +498,18 @@ func _step_grunt(dt: float, g: SimEntity, p: SimEntity) -> void:
 				g.state = &"windup"
 				g.state_t = tuning.grunt_windup
 			elif dist > contact:
-				g.vel = to_p / dist * tuning.grunt_speed
+				var speed := tuning.grunt_speed
+				if g.has_affix(&"fast"):
+					speed *= tuning.elite_fast_mult
+				g.vel = to_p / dist * speed
 		&"windup":
 			g.state_t -= dt
 			if g.state_t <= 0.0:
 				if p.alive and dist <= contact + tuning.grunt_hit_slack:
-					damage(p.id, tuning.grunt_damage, g.facing)
+					var dmg := tuning.grunt_damage
+					if g.elite:
+						dmg *= tuning.elite_damage_mult
+					damage(p.id, dmg, g.facing)
 				g.attack_cd = tuning.grunt_recover
 				g.state = &"recover"
 				g.state_t = tuning.grunt_recover
@@ -505,6 +556,12 @@ func damage(id: int, amount: float, dir: Vector2 = Vector2.ZERO, kb: float = -1.
 		return false
 	if e.id == player_id:
 		amount *= player_stats.value("damage_taken")
+	var knock := kb if kb >= 0.0 else tuning.knockback
+	if e.has_affix(&"shielded") and dir != Vector2.ZERO and dir.dot(e.facing) < -cos(deg_to_rad(tuning.elite_shield_angle * 0.5)):
+		# Frontal hit on a shielded elite: mostly absorbed. Flank it.
+		amount *= 1.0 - tuning.elite_shield_reduction
+		knock *= 1.0 - tuning.elite_shield_reduction
+		_emit({"type": "blocked", "target": e.id, "pos": e.pos, "dir": dir})
 	e.hp = maxf(0.0, e.hp - amount)
 	if e.kind == &"grunt":
 		e.provoked_t = tuning.provoke_time
@@ -518,7 +575,7 @@ func damage(id: int, amount: float, dir: Vector2 = Vector2.ZERO, kb: float = -1.
 		# Shooting a sleeping pack wakes the whole pack.
 		_wake(e)
 	if dir != Vector2.ZERO:
-		e.pos = level.resolve_circle(e.pos + dir * (kb if kb >= 0.0 else tuning.knockback), e.radius)
+		e.pos = level.resolve_circle(e.pos + dir * knock, e.radius)
 	_emit({"type": "hit", "target": e.id, "pos": e.pos, "dir": dir, "damage": amount})
 	if e.id == player_id:
 		stats.hits_taken += 1
@@ -530,13 +587,42 @@ func damage(id: int, amount: float, dir: Vector2 = Vector2.ZERO, kb: float = -1.
 			stats.kills += 1
 		_emit({"type": "kill", "target": e.id, "pos": e.pos})
 		if e.kind == &"grunt":
+			if e.has_affix(&"volatile"):
+				e.fuse_t = tuning.elite_fuse
+				_emit({"type": "fuse", "id": e.id, "pos": e.pos, "radius": tuning.elite_blast_radius, "time": e.fuse_t})
 			# Always draw, so the drop chance never changes what the rng hands out next.
-			if rng.randf() < tuning.item_drop_chance:
+			var roll := rng.randf()
+			if e.elite or roll < tuning.item_drop_chance:
 				drop_item("servo_trigger", e.pos)
 			if wave > 0 and grunts_alive() == 0:
 				_emit({"type": "wave_cleared", "wave": wave})
 				next_wave_t = WAVE_DELAY
 	return true
+
+## Volatile corpses count down, then blast: the player (i-frames apply, so a dash through
+## dodges it) and every living grunt within elite_blast_radius + their radius take
+## grunt_damage × elite_blast_damage_mult, pushed away from the center. A volatile elite killed
+## inside its own pack is a tool.
+func _step_fuses(dt: float) -> void:
+	for e in entities.values():
+		if e.alive or e.fuse_t < 0.0:
+			continue
+		e.fuse_t -= dt
+		if e.fuse_t > 0.0:
+			continue
+		e.fuse_t = -1.0
+		_blast(e.pos, tuning.elite_blast_radius, tuning.grunt_damage * tuning.elite_blast_damage_mult)
+
+func _blast(center: Vector2, radius: float, dmg: float) -> void:
+	_emit({"type": "blast", "pos": center, "radius": radius})
+	for t in entities.values().duplicate():
+		if not t.alive:
+			continue
+		var d: float = t.pos.distance_to(center)
+		if d > radius + t.radius:
+			continue
+		var dir: Vector2 = (t.pos - center) / d if d > 0.0001 else Vector2.ZERO
+		damage(t.id, dmg, dir, tuning.knockback)
 
 ## Put an item on the floor.
 func drop_item(kind: String, pos: Vector2) -> SimItem:

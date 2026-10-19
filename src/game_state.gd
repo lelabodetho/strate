@@ -17,6 +17,7 @@ extends Node
 ##   --next=<frame>        call next_wave() on that capture frame
 ##   --reset=<frame>       call reset_waves() on that capture frame
 ##   --drop=x,z            put a servo_trigger on the floor at start (tests the pickup flow)
+##   --elite=x,z[,affix,...]  hand-placed elite at start (affixes: shielded, volatile, fast)
 ##   --weapon=<name>       hunter | brute | technomancer
 ##   --look=<name>         render_test only: load tools/presets/look_<name>.json (default: "default")
 ##   --mode=<name>         render_test only: pixel | dither | mix (tools/snap.sh picks that scene)
@@ -72,6 +73,14 @@ func _ready() -> void:
 	world.begin()
 	if _args.has("drop"):
 		world.drop_item("servo_trigger", _vec_arg("drop", Vector2.ZERO))
+	if _args.has("elite"):
+		var parts: PackedStringArray = String(_args["elite"]).split(",")
+		if parts.size() >= 2:
+			var affixes: Array[StringName] = []
+			for i in range(2, parts.size()):
+				if SimWorld.AFFIXES.has(StringName(parts[i])):
+					affixes.append(StringName(parts[i]))
+			world.spawn_elite(Vector2(float(parts[0]), float(parts[1])), affixes)
 	if _args.has("screenshot") or _args.has("state"):
 		_frames_left = int(_args.get("frames", "30"))
 		_scripted = true

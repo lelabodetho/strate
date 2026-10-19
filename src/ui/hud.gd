@@ -1,7 +1,7 @@
 class_name Hud
 extends CanvasLayer
-## Minimal HUD for the tuning arena: wave line top-left (with the effective cadence), one line
-## per carried item under it, "R pour recommencer" on death.
+## Minimal HUD for the tuning arena: wave line top-left (with the effective cadence), an elite
+## line while one is alive, one line per carried item under it, "R pour recommencer" on death.
 ## Meta keys (physical, layout-independent): R restart the wave (when dead), N next wave,
 ## 0 back to wave 1, 1/2/3 weapon profile.
 ## Everything goes through GameState; the HUD never touches the sim.
@@ -10,6 +10,9 @@ const TEXT_COLOR := Color(0.85, 0.82, 0.78)
 const FLASH_COLOR := Color(1.0, 0.85, 0.5)
 const FLASH_TIME := 0.6
 const ITEM_COLOR := Color(1.0, 0.6, 0.25)
+const DANGER_COLOR := Color(0.9, 0.15, 0.1)
+const AFFIX_NAMES := {"shielded": "blindé", "volatile": "instable", "fast": "célère"}
+const LINE_H := 22
 
 # Player-facing names for item kinds and stats (view-side only; the sim knows keys).
 const ITEM_NAMES := {"servo_trigger": "Servo-gâchette"}
@@ -17,6 +20,7 @@ const STAT_NAMES := {"fire_rate": "cadence", "proj_damage": "dégâts", "proj_sp
 	"player_speed": "vitesse", "player_hp": "PV", "knockback": "recul", "dash_cooldown": "recharge du dash"}
 
 var _wave_label: Label
+var _elite_label: Label
 var _items_label: Label
 var _death_label: Label
 var _flash_t := 0.0
@@ -30,6 +34,16 @@ func _ready() -> void:
 	_wave_label.add_theme_constant_override("shadow_offset_y", 1)
 	_wave_label.position = Vector2(16, 12)
 	add_child(_wave_label)
+
+	_elite_label = Label.new()
+	_elite_label.add_theme_font_size_override("font_size", 16)
+	_elite_label.add_theme_color_override("font_color", DANGER_COLOR)
+	_elite_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_elite_label.add_theme_constant_override("shadow_offset_x", 1)
+	_elite_label.add_theme_constant_override("shadow_offset_y", 1)
+	_elite_label.position = Vector2(16, 42)
+	_elite_label.visible = false
+	add_child(_elite_label)
 
 	_items_label = Label.new()
 	_items_label.add_theme_font_size_override("font_size", 16)
@@ -70,6 +84,18 @@ func _process(dt: float) -> void:
 	if GameState.render_scene:
 		line += " · rendu %s [F]" % GameState.look.mode
 	_wave_label.text = line
+	var elite: SimEntity = null
+	for e in w.elites():
+		if e.alive:
+			elite = e
+			break
+	_elite_label.visible = elite != null
+	if elite != null:
+		var names := PackedStringArray()
+		for a in elite.affixes:
+			names.append(AFFIX_NAMES.get(String(a), String(a)))
+		_elite_label.text = "ÉLITE · %s · %d/%d PV" % [" · ".join(names), int(round(elite.hp)), int(round(elite.hp_max))]
+	_items_label.position.y = 42 + (LINE_H if elite != null else 0)
 	var lines := PackedStringArray()
 	for it in w.picked_items:
 		lines.append(item_line(it))

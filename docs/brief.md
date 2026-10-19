@@ -295,6 +295,19 @@ Retenir pour le système de loot (jalon 4) : l'empilement linéaire (+30 % × n)
 
 Critère de sortie : l'agent produit un nouveau personnage cohérent en un prompt.
 
+### Jalon 4 — Élites (première brique, bouclée le 19/10/2026)
+
+Une élite est un grunt qui change la règle d'engagement. Règle posée : **chaque affixe a un contre que le hunter de départ possède déjà** (placement, dash, distance), jamais un stat-check.
+
+- [x] Sim : `SimEntity.elite / affixes / fuse_t`, une élite par vague dès `elite_from_wave` (2), à la tête d'un pack seedé, tirée après le placement (activer ou couper les élites ne déplace aucun grunt de la vague). Corps × 1,2, PV × 3, dégâts × 1,5. Un affixe, deux distincts à partir de la vague 5. Les élites lâchent toujours un item.
+- [x] **blindé** : les coups frontaux (cône de 120°) perdent 70 % de dégâts et de recul, événement `blocked`. Contre : flanquer.
+- [x] **instable** : le cadavre explose après 0,6 s (rayon 2, dégâts grunt × 2, recul), joueur et grunts compris, i-frames respectées. Contre : reculer ou dasher à travers. Tuée dans son pack, l'élite devient un outil.
+- [x] **célère** : poursuite à 1,6× la vitesse, retour au spawn inchangé. Contre : la distance, le dash.
+- [x] View : corps plus grand et plus sombre, anneau rouge DANGER au sol, plaque acier devant le blindé, pulsation rouge de l'instable, corps fin et haut du célère ; disque rouge qui grandit pendant la mèche, flash du blast, flash bleu acier sur un coup bloqué. HUD : ligne « ÉLITE · blindé · 59/72 PV ». Harnais : `--elite=x,z[,affixe,...]`.
+- [x] 29 checks headless de plus (171 au total).
+
+À valider en jeu : la mèche de 0,6 s laisse-t-elle le temps de reculer sans dash ; le cône de 120° force-t-il vraiment le flanc avec une cadence de 0,45 s ; l'élite célère est-elle lisible quand elle sort d'un pack ; le blast dans le pack est-il un plaisir ou un piège (il tue les packmates mais aussi le joueur collé). Décider si l'élite doit passer devant son pack (aujourd'hui c'est le premier grunt placé, sans comportement de leader).
+
 ### Jalon 4 — Contenu
 
 Seulement maintenant : items, ennemis, zone, musique. C'est là que « prendre le temps de concevoir items, gameplay, assets » commence vraiment.

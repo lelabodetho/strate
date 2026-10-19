@@ -12,6 +12,9 @@ const SWING_COLOR := Color(1.0, 1.0, 1.0, 0.85)
 const SWING_TIME := 0.1
 const EXPLOSION_COLOR := Color(1.0, 0.6, 0.3, 0.8)
 const EXPLOSION_TIME := 0.35
+const FUSE_COLOR := Color(0.9, 0.15, 0.1, 0.45)
+const BLAST_COLOR := Color(0.9, 0.15, 0.1, 0.9)
+const BLAST_TIME := 0.3
 
 var debug: bool = false:
 	set(v):
@@ -85,8 +88,12 @@ func sync(world: SimWorld) -> void:
 
 	if world.tick != _last_event_tick:
 		_last_event_tick = world.tick
+		var blocked := []
 		for ev in world.events:
-			_on_event(ev, world)
+			if ev.type == "blocked":
+				blocked.append(ev.target)
+		for ev in world.events:
+			_on_event(ev, world, blocked)
 
 	# A picked-up item plays its exit and frees itself; anything else gone from the sim goes now.
 	for id in _item_views.keys():
@@ -96,12 +103,20 @@ func sync(world: SimWorld) -> void:
 				iv.queue_free()
 			_item_views.erase(id)
 
-func _on_event(ev: Dictionary, world: SimWorld) -> void:
+func _on_event(ev: Dictionary, world: SimWorld, blocked: Array) -> void:
 	match ev.type:
 		"hit":
 			var v: EntityView = _views.get(ev.target)
-			if v != null:
+			if v != null and not blocked.has(ev.target):
 				v.flash(EntityView.HIT_FLASH, EntityView.HIT_FLASH_TIME)
+		"blocked":
+			var v: EntityView = _views.get(ev.target)
+			if v != null:
+				v.flash(EntityView.BLOCKED_FLASH, EntityView.BLOCKED_FLASH_TIME)
+		"fuse":
+			_spawn_disc(ev.pos, ev.radius, FUSE_COLOR, ev.time, "fuse")
+		"blast":
+			_spawn_disc(ev.pos, ev.radius, BLAST_COLOR, BLAST_TIME, "blast")
 		"kill":
 			var v: EntityView = _views.get(ev.target)
 			if v != null:
@@ -161,6 +176,21 @@ func _spawn_swing(pos: Vector2, dir: Vector2, weapon: WeaponProfile) -> void:
 	add_child(m)
 	_transients.append({"node": m, "t": 0.0, "ttl": SWING_TIME, "kind": "swing"})
 
+## A flat ground disc of `radius`, animated by kind in _process.
+func _spawn_disc(pos: Vector2, radius: float, color: Color, ttl: float, kind: String) -> void:
+	var m := MeshInstance3D.new()
+	var disc := CylinderMesh.new()
+	disc.top_radius = radius
+	disc.bottom_radius = radius
+	disc.height = 0.02
+	m.mesh = disc
+	m.material_override = _flat_material(color)
+	m.position = Vector3(pos.x, 0.045, pos.y)
+	if kind == "fuse":
+		m.scale = Vector3(0.1, 1.0, 0.1)
+	add_child(m)
+	_transients.append({"node": m, "t": 0.0, "ttl": ttl, "kind": kind})
+
 ## Technomancer: a ground disc growing to the blast radius, then fading.
 func _spawn_explosion(pos: Vector2, radius: float) -> void:
 	var m := MeshInstance3D.new()
@@ -206,5 +236,11 @@ func _process(dt: float) -> void:
 				var s := lerpf(0.1, 1.0, 1.0 - (1.0 - g) * (1.0 - g))
 				m.scale = Vector3(s, 1.0, s)
 				mat.albedo_color.a = EXPLOSION_COLOR.a * (1.0 - maxf(0.0, (k - 0.33) / 0.67))
+			"fuse":
+				# The telegraph: grows to the blast radius over the fuse time.
+				var s := lerpf(0.1, 1.0, k)
+				m.scale = Vector3(s, 1.0, s)
+			"blast":
+				mat.albedo_color.a = BLAST_COLOR.a * (1.0 - k)
 		keep.append(tr)
 	_transients = keep
