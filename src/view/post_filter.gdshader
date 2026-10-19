@@ -1,7 +1,8 @@
 shader_type canvas_item;
 // Post-process on a low-resolution SubViewportContainer (nearest upscale). Ports the three
 // looks of tools/filters_preview.py: palette is 8 steel greys + 4 accent oranges, plus one
-// danger red outside the accent ramp for telegraphs (grunt windup) in every mode.
+// danger red outside the accent ramp for telegraphs (grunt windup) and two cold cyans for rare
+// loot (ItemView rare colour), both kept in every mode.
 //   mode 0 pixel   : nearest palette colour, accents (warm, saturated) on the accent ramp
 //   mode 1 dither  : three greys (dark / mid / light) through a Bayer 8x8 threshold, accent
 //                    dithered against dark so the volume stays
@@ -30,6 +31,8 @@ const vec3 TONE_MID = vec3(74.0, 70.0, 72.0) / 255.0;
 const vec3 TONE_LIGHT = vec3(150.0, 142.0, 136.0) / 255.0;
 const vec3 ACCENT = vec3(255.0, 120.0, 40.0) / 255.0;
 const vec3 DANGER = vec3(0.9, 0.15, 0.1);
+const vec3 RARE_LIGHT = vec3(0.4, 0.8, 0.9);
+const vec3 RARE_DARK = vec3(0.16, 0.36, 0.42);
 
 float lum(vec3 c) {
 	return dot(c, vec3(0.299, 0.587, 0.114));
@@ -38,6 +41,12 @@ float lum(vec3 c) {
 // Saturated red with almost no green: the windup telegraph, never the orange accents.
 bool is_danger(vec3 c) {
 	return c.r > 0.15 && c.g < 0.3 * c.r && c.b < 0.3 * c.r;
+}
+
+// Cyan: green and blue well above red. Steel under the cold room lights (0.55, 0.72, 1.0)
+// stays below g = 1.3 r, so only the rare items' own colour gets here.
+bool is_rare(vec3 c) {
+	return c.b > 0.25 && c.g > 1.4 * c.r && c.b > 1.45 * c.r;
 }
 
 bool is_accent(vec3 c) {
@@ -90,6 +99,8 @@ void fragment() {
 	vec3 outc;
 	if (is_danger(c)) {
 		outc = DANGER;
+	} else if (is_rare(c)) {
+		outc = l > 0.4 ? RARE_LIGHT : RARE_DARK;
 	} else if (mode == 1) {
 		float t = 0.5 + (b - 0.5) * 2.0 * dither_strength;
 		if (is_accent(c)) {

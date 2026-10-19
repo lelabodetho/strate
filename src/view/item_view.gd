@@ -15,6 +15,14 @@ const RARITY_COLORS := {
 const RARITY_HALO := {&"common": 0.85, &"rare": 1.0, &"epic": 1.45}     # × HALO_RADIUS
 const RARITY_LIGHT := {&"common": 0.8, &"rare": 1.3, &"epic": 2.2}      # × LIGHT_ENERGY
 const HALO_ALPHA := 0.3
+# Render scene: the entity layer draws over the magenta occluder, so an additive halo would
+# blend with the key colour and come out steel white. There the halo is an opaque dark tone of
+# the rarity colour, which the filter quantises to its ramp (steel / rare dark / accent dark).
+const RARITY_HALO_SOLID := {
+	&"common": Color(0.30, 0.30, 0.34),
+	&"rare": Color(0.16, 0.36, 0.42),
+	&"epic": Color(0.35, 0.14, 0.04),
+}
 const FLASH_COLOR := Color(1.0, 1.0, 1.0)
 const SIZE := 0.3            # half-width of the octahedron
 const HEIGHT := 0.45         # half-height
@@ -34,6 +42,7 @@ var color: Color = ITEM_COLOR
 var leaving: bool = false    # pickup animation in progress; the view frees itself at the end
 var _light_energy := LIGHT_ENERGY
 var _halo_color: Color
+var _halo_solid := false
 
 var _gem: MeshInstance3D
 var _gem_mat: StandardMaterial3D
@@ -49,7 +58,8 @@ func setup(it: SimItem) -> void:
 	_phase = float(it.id) * 1.7   # items do not bob in sync
 	position = Vector3(it.pos.x, 0.0, it.pos.y)
 	color = RARITY_COLORS.get(it.rarity, ITEM_COLOR)
-	_halo_color = Color(color, HALO_ALPHA)
+	_halo_solid = GameState.render_scene
+	_halo_color = RARITY_HALO_SOLID.get(it.rarity, color) if _halo_solid else Color(color, HALO_ALPHA)
 	_light_energy = LIGHT_ENERGY * float(RARITY_LIGHT.get(it.rarity, 1.0))
 	var halo_r: float = HALO_RADIUS * float(RARITY_HALO.get(it.rarity, 1.0))
 
@@ -72,8 +82,9 @@ func setup(it: SimItem) -> void:
 	_halo.mesh = disc
 	_halo_mat = StandardMaterial3D.new()
 	_halo_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_halo_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	_halo_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	if not _halo_solid:
+		_halo_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_halo_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 	_halo_mat.albedo_color = _halo_color
 	_halo.material_override = _halo_mat
 	_halo.position.y = 0.03
@@ -117,7 +128,11 @@ func _process(dt: float) -> void:
 	var s := lerpf(1.3, 0.2, k)
 	_gem.scale = Vector3(s, s, s)
 	_gem.rotation.y += SPIN_SPEED * 4.0 * dt
-	_halo_mat.albedo_color.a = HALO_ALPHA * maxf(0.0, 1.0 - k * 2.0)
+	var hs := maxf(0.0, 1.0 - k * 2.0)
+	if _halo_solid:
+		_halo.scale = Vector3(hs, 1.0, hs)
+	else:
+		_halo_mat.albedo_color.a = _halo_color.a * hs
 	_light.light_energy = _light_energy * (1.0 + 2.0 * (1.0 - k)) * maxf(0.0, 1.0 - k * 1.5)
 	_light.position.y = _gem.position.y
 
