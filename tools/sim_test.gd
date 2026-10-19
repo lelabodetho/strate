@@ -39,6 +39,9 @@ func _init() -> void:
 	test_fast()
 	test_elite_drop()
 	test_wave_pacing()
+	test_turn_rate()
+	test_attack_commitment()
+	test_shield_window()
 	print("[sim_test] ", "OK" if failures == 0 else "FAILED (%d)" % failures)
 	quit(1 if failures > 0 else 0)
 
@@ -891,3 +894,84 @@ func test_wave_pacing() -> void:
 	# Defaults: the old constants, wave 6 capped at 12, 2 s delay.
 	var w5 := SimWorld.new(1)
 	check(w5.tuning.wave_delay == 2.0 and w5.tuning.wave_cap == 12.0 and w5.tuning.pack_spacing == 0.0 and w5.tuning.elite_every == 1.0, "defaults unchanged")
+
+func _angle_to_player(w: SimWorld, g: SimEntity) -> float:
+	return rad_to_deg(absf(g.facing.angle_to((w.player().pos - g.pos).normalized())))
+
+func test_turn_rate() -> void:
+	# 720 deg/s: a 20-degree offset is closed within 2 ticks (12 degrees per tick).
+	var w := SimWorld.new(1)
+	w.spawn(&"player", Vector2(sin(deg_to_rad(20.0)) * 10.0, cos(deg_to_rad(20.0)) * 10.0))
+	var g := w.spawn(&"grunt", Vector2(0, 0))   # facing DOWN (0, 1)
+	run(w, 2.0 * DT, cmd())
+	check(_angle_to_player(w, g) < 1.0, "720 deg/s: faces the player within 2 ticks (%.1f deg off)" % _angle_to_player(w, g))
+	# 90 deg/s: a 180-degree turn takes about 2 s.
+	var w2 := SimWorld.new(1)
+	w2.tuning.grunt_turn_rate = 90.0
+	w2.spawn(&"player", Vector2(0, -10))
+	var g2 := w2.spawn(&"grunt", Vector2(0, 0))   # facing DOWN, player straight behind
+	run(w2, 1.0, cmd())
+	var mid := _angle_to_player(w2, g2)
+	check(absf(mid - 90.0) < 3.0, "90 deg/s: 90 degrees left after 1 s (%.1f)" % mid)
+	run(w2, 0.9, cmd())
+	check(_angle_to_player(w2, g2) > 5.0, "not yet aligned at 1.9 s (%.1f deg)" % _angle_to_player(w2, g2))
+	run(w2, 0.2, cmd())
+	check(_angle_to_player(w2, g2) < 1.0, "aligned after ~2 s (%.1f deg)" % _angle_to_player(w2, g2))
+
+func _reach_windup(w: SimWorld, g: SimEntity) -> bool:
+	var guard := 0
+	while g.state != &"windup" and guard < 600:
+		w.step(DT, cmd())
+		guard += 1
+	return g.state == &"windup"
+
+func test_attack_commitment() -> void:
+	var w := SimWorld.new(1)
+	var p := w.spawn(&"player", Vector2(0, 9))
+	var g := w.spawn(&"grunt", Vector2(0, 7.8))
+	check(_reach_windup(w, g), "grunt winds up at contact")
+	var frozen := g.facing
+	# Strafe 90 degrees around the grunt while it winds up and recovers.
+	p.pos = g.pos + Vector2(1.2, 0)
+	run(w, w.tuning.grunt_windup * 0.5, cmd())
+	check(g.state == &"windup" and g.facing == frozen, "windup: facing frozen while the player strafes (%.2f deg)" % _angle_to_player(w, g))
+	run(w, w.tuning.grunt_windup * 0.5 + 0.1, cmd())
+	check(g.state == &"recover" and g.facing == frozen, "recover: still frozen")
+	run(w, w.tuning.grunt_recover + 0.2, cmd())
+	check(g.state != &"recover" and _angle_to_player(w, g) < 1.0, "after recover it turns to the player again (%.1f deg)" % _angle_to_player(w, g))
+
+func test_shield_window() -> void:
+	# Shielded elite at contact, facing the player. Dash through to its back while it winds up,
+	# shoot it in the back during recover: full damage, no "blocked".
+	var w := SimWorld.new(1)
+	var p := w.spawn(&"player", Vector2(0, 9))
+	var e := w.spawn_elite(Vector2(0, 7.8), [&"shielded"])   # facing DOWN = toward the player
+	check(_reach_windup(w, e), "shielded elite winds up at contact")
+	var facing_at_windup := e.facing
+	w.step(DT, cmd(Vector2(0, -1), Vector2(0, -20), false, true))   # dash north, through it
+	run(w, w.tuning.dash_time, cmd(Vector2(0, -1)))
+	check(p.pos.y < e.pos.y - 1.0 and e.facing == facing_at_windup, "dashed through: player behind (z=%.1f vs %.1f), elite still facing south" % [p.pos.y, e.pos.y])
+	# Shoot back at it (aim south) while it recovers.
+	var hp0 := e.hp
+	var blocked := []
+	var hits := []
+	var guard := 0
+	while hits.is_empty() and guard < 60:
+		w.step(DT, cmd(Vector2.ZERO, Vector2(0, 20), true))
+		for ev in w.events:
+			if ev.type == "blocked" and ev.target == e.id:
+				blocked.append(ev)
+			if ev.type == "hit" and ev.target == e.id:
+				hits.append(ev)
+		guard += 1
+	check(hits.size() == 1 and e.state == &"recover", "the shot lands during recover (state=%s)" % e.state)
+	check(blocked.is_empty() and is_equal_approx(hp0 - e.hp, w.player_stats.value("proj_damage")), "shot in the back: full damage (%.1f), no blocked event" % (hp0 - e.hp))
+	# Control: the same shot from the front is blocked.
+	var w2 := SimWorld.new(1)
+	w2.spawn(&"player", Vector2(0, 9))
+	var e2 := w2.spawn_elite(Vector2(0, 4), [&"shielded"])
+	e2.state = &"recover"
+	e2.state_t = 100.0
+	var hp2 := e2.hp
+	var blocked2 := _events_of(w2, "blocked", 0.6, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	check(blocked2.size() >= 1 and hp2 - e2.hp < w2.player_stats.value("proj_damage"), "control: frontal shots are blocked")

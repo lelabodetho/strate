@@ -537,10 +537,17 @@ func _step_grunt(dt: float, g: SimEntity, p: SimEntity) -> void:
 			if g.state_t <= 0.0:
 				g.state = &"chase"
 
+	# Facing: turns toward the player (or the way home) at a bounded rate; frozen during windup
+	# and recover (attack commitment), so a dash through a shielded elite exposes its back.
+	var desired := g.facing
 	if g.state == &"return" and g.vel != Vector2.ZERO:
-		g.facing = g.vel.normalized()
+		desired = g.vel.normalized()
 	elif dist > 0.05:
-		g.facing = to_p / dist
+		desired = to_p / dist
+	if g.state != &"windup" and g.state != &"recover":
+		var rate := deg_to_rad(tuning.elite_shield_turn_rate if g.has_affix(&"shielded") else tuning.grunt_turn_rate)
+		var turn := clampf(g.facing.angle_to(desired), -rate * dt, rate * dt)
+		g.facing = g.facing.rotated(turn).normalized()
 	if g.vel != Vector2.ZERO:
 		g.pos = level.resolve_circle(g.pos + g.vel * dt, g.radius)
 

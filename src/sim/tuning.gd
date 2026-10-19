@@ -30,6 +30,8 @@ const SPECS := [
 	["grunt_windup", 0.05, 2.0, 0.01],
 	["grunt_recover", 0.0, 3.0, 0.05],
 	["grunt_aggro", 1.0, 40.0, 1.0],
+	["grunt_turn_rate", 60.0, 1080.0, 30.0],
+	["elite_shield_turn_rate", 30.0, 720.0, 10.0],
 	["aggro_share_radius", 0.0, 10.0, 0.5],
 	["aggro_drop_mult", 1.0, 4.0, 0.1],
 	["provoke_time", 0.0, 15.0, 0.5],
@@ -80,6 +82,8 @@ var grunt_hit_slack := 0.5    # extra distance tolerated when the hit lands (let
 var grunt_windup := 0.4
 var grunt_recover := 0.7
 var grunt_aggro := 30.0
+var grunt_turn_rate := 720.0   # deg/s the facing may rotate while idle, chasing or returning (≈ a snap)
+var elite_shield_turn_rate := 150.0  # a shielded elite turns this slowly instead: dash past it to reach its back
 var aggro_share_radius := 4.0  # a waking grunt wakes idle grunts within this distance
 var aggro_drop_mult := 1.8     # a chasing grunt farther than grunt_aggro * this gives up and walks home
 var provoke_time := 4.0        # a hit grunt ignores the leash for this long, re-armed on every hit
