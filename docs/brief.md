@@ -4,7 +4,7 @@
 
 **État** : jalons 0, 1, 2, 2b, 2c bouclés, jalon 4 entamé (élites avec affixes, loot généré avec slots / rareté / paliers). Arène de vagues jouable au preset par défaut (`tools/presets/default.json`), rendu `mix` avec langage visuel orange = joueur / rouge = menace / couleur par rareté pour le loot. 235 tests headless.
 
-**Session du 19/10 (soir), premiers verdicts en jeu** : le sac est validé tel quel ; le ramassage passe à la souris (survol = étiquette, clic = ramasser). Reste à valider : les élites, et la suite de la liste loot.
+**Session du 19/10 (soir), verdicts en jeu** : **brique loot validée** (sac tel quel, ramassage à la souris : survol = étiquette, clic = ramasser, portée 1,5). Reste à valider : les élites.
 
 **Ensuite** : reste du jalon 4 (paliers de difficulté, boss, éditeur de zone).
 
@@ -308,7 +308,7 @@ Une élite est un grunt qui change la règle d'engagement. Règle posée : **cha
 
 À valider en jeu : la mèche de 0,6 s laisse-t-elle le temps de reculer sans dash ; le cône de 120° force-t-il vraiment le flanc avec une cadence de 0,45 s ; l'élite célère est-elle lisible quand elle sort d'un pack ; le blast dans le pack est-il un plaisir ou un piège (il tue les packmates mais aussi le joueur collé). Décider si l'élite doit passer devant son pack (aujourd'hui c'est le premier grunt placé, sans comportement de leader).
 
-### Jalon 4 — Loot (deuxième brique, bouclée le 19/10/2026)
+### Jalon 4 — Loot (deuxième brique, bouclée le 19/10/2026, **validée en jeu le 19/10 au soir**)
 
 Un item doit changer un **breakpoint**, pas une moyenne : 22 dégâts contre 80 PV = 4 tirs, et seul un affixe dégâts T3 (+25 %) passe à 3 ; un T2 (+15 %) reste à 4. Tout le système est dimensionné sur cette règle.
 
@@ -326,7 +326,7 @@ Un item doit changer un **breakpoint**, pas une moyenne : 22 dégâts contre 80 
 
 **Verdicts du 19/10 (soir)** : le sac coupe un peu le rythme, mais c'est le rythme attendu d'un ARPG : on ne change pas d'équipement en combat, on tue, puis on loot et on s'équipe. **Sac validé tel quel, pas d'« équiper direct » sur E long.** Le ramassage pendant un pack est rare, donc inutile de rendre E plus large ; le vrai moment de lecture d'un item est le calme après la vague, à la souris → tooltip au-dessus de l'item et clic pour ramasser (fait, ci-dessus).
 
-Reste à valider en jeu : les flèches ▲ / ▼ suffisent-elles ou faut-il le delta chiffré ; les +8 % se sentent-ils ou faut-il attendre un T2 ; la part de reliques (30 % par élite, une élite toutes les 2 vagues) est-elle assez rare pour compter ; faut-il une rareté au-dessus de relique avant les boss ou plutôt un affixe à effet (jalon 4, suite).
+**Verdict final du 19/10 (soir) : la partie loot est validée.** Questions laissées ouvertes, à rouvrir seulement si le jeu les pose : les flèches ▲ / ▼ ou le delta chiffré ; les +8 % contre le T2 ; la part de reliques (30 % par élite, une élite toutes les 2 vagues) est-elle assez rare pour compter ; faut-il une rareté au-dessus de relique avant les boss ou plutôt un affixe à effet (jalon 4, suite).
 
 ### Jalon 4 — Contenu
 
