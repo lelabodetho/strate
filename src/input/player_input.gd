@@ -2,6 +2,8 @@ class_name PlayerInput
 extends Node
 ## Turns Godot Input into a Command. Needs the camera to project the mouse onto the ground plane
 ## and to find the floor item under the cursor (hovered_item_id, read by the scene for the view).
+## The enemy snapped under the cursor (target_id) comes from the sim's own rule,
+## SimWorld.target_at, so play and harness aim the same way.
 
 # Where a floor item sits for the cursor: the gem floats at this height, the pick sphere wraps it.
 const ITEM_PICK_HEIGHT := 0.75
@@ -19,6 +21,7 @@ func read() -> Command:
 	var c := Command.new()
 	c.move = Input.get_vector("move_left", "move_right", "move_up", "move_down")
 	c.aim = _mouse_on_ground()
+	c.target_id = GameState.world.target_at(c.aim) if GameState.world != null else -1
 	hovered_item_id = _item_under_mouse(GameState.world)
 	var pressed := Input.is_action_pressed("attack") and not combat_locked
 	var just := Input.is_action_just_pressed("attack") and not combat_locked

@@ -58,6 +58,8 @@ func sync(world: SimWorld) -> void:
 			v.set_debug(debug, e)
 		var is_player: bool = e.id == world.player_id
 		v.sync(e, world.is_dashing() and is_player, world.attack_phase if is_player else &"idle")
+		if not is_player:
+			v.set_targeted(e.id == world.target_id, e)
 	_debug_dirty = false
 	for id in _views.keys():
 		if not world.entities.has(id):

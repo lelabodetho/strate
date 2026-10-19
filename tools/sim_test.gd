@@ -50,6 +50,7 @@ func _init() -> void:
 	test_attack_commitment()
 	test_shield_window()
 	test_attack_window()
+	test_targeting()
 	print("[sim_test] ", "OK" if failures == 0 else "FAILED (%d)" % failures)
 	quit(1 if failures > 0 else 0)
 
@@ -60,9 +61,10 @@ func check(cond: bool, msg: String) -> void:
 	else:
 		print("[sim_test] ok: " + msg)
 
-func cmd(move := Vector2.ZERO, aim := Vector2(0, -20), attack := false, dash := false, interact := false, pickup_id := 0) -> Command:
+func cmd(move := Vector2.ZERO, aim := Vector2(0, -20), attack := false, dash := false, interact := false, pickup_id := 0, target_id := -1) -> Command:
 	var c := Command.new()
 	c.pickup_id = pickup_id
+	c.target_id = target_id
 	c.move = move
 	c.aim = aim
 	c.attack = attack
@@ -1394,3 +1396,88 @@ func test_attack_window() -> void:
 	w4.set_weapon("brute")
 	check(w4.attack_phase == &"idle" and w4.swing_t == 0.0, "switching profiles cancels the window")
 	check(not SimTuning.keys().has("fire_interval"), "fire_interval is no longer a tuning key")
+
+## Cursor targeting: the grunt snapped under the cursor is what the attack goes to.
+func test_targeting() -> void:
+	var w := SimWorld.new(1)
+	var p := w.spawn(&"player", Vector2(0, 9))
+	check(SimTuning.keys().has("target_snap_radius") and is_equal_approx(w.tuning.target_snap_radius, 1.5), "target_snap_radius is a tuning key, default 1.5")
+	var g := _still_grunt(w, Vector2(0, 2))
+	check(w.target_at(Vector2(1.2, 2)) == g.id, "a grunt 1.2 from the cursor is targeted")
+	check(w.target_at(Vector2(1.8, 2)) == -1, "a grunt 1.8 from the cursor is not")
+	check(w.target_at(Vector2(0, 2)) == g.id, "cursor on the grunt: targeted")
+	var g2 := _still_grunt(w, Vector2(2.4, 2))
+	check(w.target_at(Vector2(1.5, 2)) == g2.id and w.target_at(Vector2(0.9, 2)) == g.id, "two grunts: the closest to the cursor wins")
+	w.tuning.target_snap_radius = 0.0
+	check(w.target_at(Vector2(0, 2)) == -1, "snap radius 0: targeting off")
+	w.tuning.target_snap_radius = 1.5
+	# A fat elite and a thin grunt at the same center distance: the nearer hit circle wins.
+	var w2 := SimWorld.new(1)
+	w2.spawn(&"player", Vector2(0, 9))
+	var thin := _still_grunt(w2, Vector2(-1.0, 0))
+	var fat := w2.spawn_elite(Vector2(1.0, 0), [&"fast"])
+	fat.state = &"recover"
+	fat.state_t = 100.0
+	check(fat.hit_radius > thin.hit_radius and w2.target_at(Vector2(0, 0)) == fat.id, "same center distance: the bigger hit circle wins")
+	# Dead, unknown or player ids are ignored by the sim: the cursor rules.
+	g2.alive = false
+	check(w.target_at(Vector2(2.4, 2)) == -1 or w.target_at(Vector2(2.4, 2)) == g.id, "a dead grunt is never targeted")
+	w.step(DT, cmd(Vector2.ZERO, Vector2(5, 9), false, false, false, 0, g2.id))
+	check(w.target_id == -1 and p.facing.is_equal_approx(Vector2(1, 0)), "dead target id: ignored, facing follows the cursor")
+	w.step(DT, cmd(Vector2.ZERO, Vector2(5, 9), false, false, false, 0, p.id))
+	check(w.target_id == -1, "the player's own id: ignored")
+	w.step(DT, cmd(Vector2.ZERO, Vector2(5, 9), false, false, false, 0, 9999))
+	check(w.target_id == -1, "unknown id: ignored")
+	# A valid target turns the player toward it, whatever the cursor says.
+	w.step(DT, cmd(Vector2.ZERO, Vector2(5, 9), false, false, false, 0, g.id))
+	check(w.target_id == g.id and p.facing.is_equal_approx((g.pos - p.pos).normalized()) and w.to_dict().target_id == g.id,
+		"valid target: facing goes to the grunt, target_id in the state")
+	# The bullet hits the targeted grunt even with the raw cursor 1.0 off its center; the same
+	# cursor without a target misses.
+	var hit_with := _shoot_at(Vector2(1.0, 2), true)
+	var hit_without := _shoot_at(Vector2(1.0, 2), false)
+	check(hit_with == 1 and hit_without == 0, "cursor 1.0 off: the targeted shot hits (%d), the raw one misses (%d)" % [hit_with, hit_without])
+	# Brute: the cone faces the target, not the cursor.
+	var w3 := SimWorld.new(1)
+	w3.spawn(&"player", Vector2(0, 0))
+	w3.set_weapon("brute")
+	var side := _still_grunt(w3, Vector2(1.2, 0))   # east, 1.2 away; cursor points south
+	var hp0 := side.hp
+	var facing_at_hit := Vector2.ZERO
+	for i in 30:
+		w3.step(DT, cmd(Vector2.ZERO, Vector2(0, 20), true, false, false, 0, w3.target_at(Vector2(1.0, 0))))
+		for ev in w3.events:
+			if ev.type == "swing":
+				facing_at_hit = ev.dir
+	check(side.hp < hp0 and facing_at_hit.is_equal_approx(Vector2(1, 0)) and side.pos.x > 1.2,
+		"brute: the cone swings at the target, east, not at the cursor (hp %.0f -> %.0f, knocked to x=%.2f)" % [hp0, side.hp, side.pos.x])
+	# Technomancer: the projectile flies at the target.
+	var w4 := SimWorld.new(1)
+	w4.spawn(&"player", Vector2(0, 9))
+	w4.set_weapon("technomancer")
+	var t4 := _still_grunt(w4, Vector2(3, 3))
+	_trigger(w4, Vector2(0, -20))   # no target: straight down the corridor
+	var straight: Vector2 = w4.projectiles.values()[0].vel.normalized()
+	w4.projectiles.clear()
+	w4.set_weapon("technomancer")
+	for i in 60:
+		w4.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), true, false, false, 0, t4.id))
+		if not w4.projectiles.is_empty():
+			break
+	var aimed: Vector2 = w4.projectiles.values()[0].vel.normalized()
+	check(straight.is_equal_approx(Vector2(0, -1)) and aimed.is_equal_approx((t4.pos - Vector2(0, 9)).normalized()), "technomancer: the projectile aims at the target")
+
+## Fire once from (0, 9) at a still grunt at (0, 2) with the cursor at `aim`, with or without
+## snapping; returns the hits landed within 1 s.
+func _shoot_at(aim: Vector2, snap: bool) -> int:
+	var w := SimWorld.new(1)
+	w.spawn(&"player", Vector2(0, 9))
+	var g := _still_grunt(w, Vector2(0, 2))
+	var hits := 0
+	for i in 60:
+		var c := cmd(Vector2.ZERO, aim, i < 10, false, false, 0, w.target_at(aim) if snap else -1)
+		w.step(DT, c)
+		for ev in w.events:
+			if ev.type == "hit" and ev.target == g.id:
+				hits += 1
+	return hits

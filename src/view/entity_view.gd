@@ -3,7 +3,8 @@ extends Node3D
 ## Mirrors one SimEntity. Reads only; never writes to the sim.
 ## Feedback (flash, death pop, windup telegraph) is driven by sim state and sim events.
 ## Player: the attack windup lifts and brightens the body (orange, never red: it is not a
-## threat), the recovery settles it back a little under its size.
+## threat), the recovery settles it back a little under its size. The enemy the cursor snaps
+## to (SimWorld.target_id) wears a thin DANGER ring at its feet.
 ## Elites: bigger darker body with a DANGER ring on the ground; shielded = a steel plate in
 ## front, volatile = body pulsing toward DANGER, fast = thinner and taller. Never orange.
 
@@ -15,6 +16,8 @@ const PLAYER_RECOVERY_SCALE := 0.94
 const GRUNT_COLOR := Color(0.5, 0.5, 0.55)
 const ELITE_COLOR := Color(0.3, 0.31, 0.36)
 const DANGER_COLOR := Color(0.9, 0.15, 0.1)
+const TARGET_RING_GAP := 0.35
+const TARGET_RING_WIDTH := 0.04
 const SHIELD_COLOR := Color(0.72, 0.7, 0.68)
 const BLOCKED_FLASH := Color(0.55, 0.65, 0.9)
 const BLOCKED_FLASH_TIME := 0.1
@@ -49,6 +52,7 @@ var _debug: Node3D
 var _elite := false
 var _affixes: Array[StringName] = []
 var _t := 0.0
+var _target_ring: MeshInstance3D   # built on first use
 
 func setup(e: SimEntity) -> void:
 	entity_id = e.id
@@ -97,6 +101,14 @@ func sync(e: SimEntity, dashing: bool, attack_phase: StringName = &"idle") -> vo
 		_mesh.position = Vector3(0.0, _body_height() * 0.5, 0.0)
 	_alive = e.alive
 	visible = _alive or _death_t >= 0.0 or _fallen
+
+## Show or hide the targeting ring (grunts only; the sim never targets the player).
+func set_targeted(on: bool, e: SimEntity) -> void:
+	if on and _target_ring == null:
+		_target_ring = make_ring(e.radius + TARGET_RING_GAP, DANGER_COLOR, TARGET_RING_WIDTH)
+		add_child(_target_ring)
+	if _target_ring != null:
+		_target_ring.visible = on and e.alive
 
 func flash(color: Color, time: float) -> void:
 	_flash_color = color

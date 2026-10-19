@@ -12,6 +12,7 @@ extends Node
 ## In capture mode live input is ignored; the command comes from these flags instead:
 ##   --move=x,z            held move vector
 ##   --aim=x,z             world point under the cursor (default: straight down the corridor)
+##   --target=<id>         aim at that entity instead of whatever --aim snaps to
 ##   --hold=attack         hold the attack button
 ##   --pickup=<frame>      press interact (E) on that frame
 ##   --click=<frame>       click the hovered item on that frame (the one nearest --aim)
@@ -22,6 +23,7 @@ extends Node
 ##   --reset=<frame>       call reset_waves() on that capture frame
 ##   --drop=x,z[,rarity[,slot]]  roll an item on the floor at start (default: common weapon;
 ##                         rarity common | rare | epic, slot weapon | armor | module); --drop2=... for a second one
+##   --grunt=x,z           hand-placed grunt at start (idle until woken); --grunt2=... for a second one
 ##   --elite=x,z[,affix,...]  hand-placed elite at start (affixes: shielded, volatile, fast)
 ##   --weapon=<name>       hunter | brute | technomancer
 ##   --look=<name>         render_test only: load tools/presets/look_<name>.json (default: "default")
@@ -85,6 +87,11 @@ func _ready() -> void:
 	for key in ["drop", "drop2"]:
 		if _args.has(key):
 			_drop_arg(String(_args[key]))
+	for key in ["grunt", "grunt2"]:
+		if _args.has(key):
+			var g: PackedStringArray = String(_args[key]).split(",")
+			if g.size() >= 2:
+				world.spawn(&"grunt", Vector2(float(g[0]), float(g[1])))
 	if _args.has("elite"):
 		var parts: PackedStringArray = String(_args["elite"]).split(",")
 		if parts.size() >= 2:
@@ -265,6 +272,7 @@ func _scripted_command() -> Command:
 	var c := Command.new()
 	c.move = _vec_arg("move", Vector2.ZERO)
 	c.aim = _vec_arg("aim", Vector2(0, -20))
+	c.target_id = int(_args["target"]) if _args.has("target") else world.target_at(c.aim)
 	c.attack = String(_args.get("hold", "")).split(",").has("attack")
 	c.dash = _dash_ticks.has(world.tick + 1)
 	c.interact = _frame == _pickup_frame

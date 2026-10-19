@@ -46,6 +46,7 @@ var attack_phase: StringName = &"idle"   # &"idle" | &"windup" | &"recovery"
 var attack_t: float = 0.0       # seconds left in the current phase
 var swing_t: float = 0.0        # > 0 while the brute's lunge plays (start of recovery)
 var swing_dir: Vector2 = Vector2.DOWN
+var target_id: int = -1         # the enemy the player aims at this tick (cmd.target_id, validated); -1 = the cursor
 var wave: int = 0
 var next_wave_t: float = 0.0   # > 0 while counting down to the next wave
 var wave_packs: Array[Vector2] = []   # pack centers of the current wave
@@ -250,6 +251,7 @@ func restart_wave() -> void:
 	dash_t = 0.0
 	dash_cd = 0.0
 	iframes_t = 0.0
+	target_id = -1
 	_cancel_attack()
 	start_wave(maxi(1, wave))
 
@@ -391,12 +393,42 @@ func _step_player(dt: float, p: SimEntity, cmd: Command) -> void:
 
 	p.pos = level.resolve_circle(p.pos + p.vel * dt, p.radius)
 
-	var to_aim := cmd.aim - p.pos
+	# Cursor targeting: a valid target replaces the cursor point. The facing, hence the bullet,
+	# the blast projectile and the cone, goes to the target's position at hit time.
+	var aim_point := cmd.aim
+	target_id = -1
+	var target: SimEntity = entities.get(cmd.target_id)
+	if target != null and target.alive and target.kind != p.kind:
+		target_id = target.id
+		aim_point = target.pos
+	var to_aim := aim_point - p.pos
 	if to_aim.length() > 0.05:
 		p.facing = to_aim.normalized()
 
 	if not dashing:
 		_step_attack(dt, p, cmd)
+
+## The enemy to aim at for a cursor at `point`: alive, its center within target_snap_radius of
+## the point, the one whose hit circle is nearest the point when several qualify (a fat elite
+## beats a thin grunt at the same center distance). -1 when none. Pure, so the input layer
+## and the harness resolve the target with the same rule.
+func target_at(point: Vector2) -> int:
+	var snap := tuning.target_snap_radius
+	if snap <= 0.0:
+		return -1
+	var best := -1
+	var best_d := INF
+	for e in entities.values():
+		if not e.alive or e.kind == &"player":
+			continue
+		var d: float = e.pos.distance_to(point)
+		if d > snap:
+			continue
+		var edge: float = maxf(0.0, d - e.hit_radius)
+		if edge < best_d or (edge == best_d and e.id < best):
+			best = e.id
+			best_d = edge
+	return best
 
 ## The attack window. The tick's dt carries across a phase boundary, so a phase that ends
 ## mid-tick hands the remainder to the next one and the hit lands at exactly windup seconds
@@ -881,7 +913,7 @@ func to_dict() -> Dictionary:
 		evs.append(d)
 	return {
 		"seed": seed, "tick": tick, "time": snappedf(time, 0.001),
-		"player_id": player_id, "dashing": is_dashing(), "invulnerable": is_invulnerable(),
+		"player_id": player_id, "dashing": is_dashing(), "invulnerable": is_invulnerable(), "target_id": target_id,
 		"wave": wave, "grunts_alive": grunts_alive(), "next_wave_in": snappedf(next_wave_t, 0.01),
 		"wave_packs": wave_packs.map(func(c: Vector2): return [snappedf(c.x, 0.01), snappedf(c.y, 0.01)]),
 		"wave_fallbacks": wave_fallbacks,
