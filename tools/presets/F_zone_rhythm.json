@@ -18,7 +18,6 @@
   "elite_shield_angle": 120.0,
   "elite_shield_reduction": 0.5,
   "elite_shield_turn_rate": 90.0,
-  "fire_interval": 0.45,
   "grunt_aggro": 10.0,
   "grunt_damage": 8.0,
   "grunt_hit_radius": 0.55,

@@ -49,6 +49,7 @@ func _init() -> void:
 	test_turn_rate()
 	test_attack_commitment()
 	test_shield_window()
+	test_attack_window()
 	print("[sim_test] ", "OK" if failures == 0 else "FAILED (%d)" % failures)
 	quit(1 if failures > 0 else 0)
 
@@ -78,6 +79,15 @@ func _give(w: SimWorld, it: SimItem) -> void:
 func run(w: SimWorld, seconds: float, c: Command) -> void:
 	for i in int(round(seconds / DT)):
 		w.step(DT, c)
+
+## Hold attack until the hit lands (shot or swing event); returns the ticks it took, -1 if none.
+func _trigger(w: SimWorld, aim := Vector2(0, -20), move := Vector2.ZERO) -> int:
+	for i in 120:
+		w.step(DT, cmd(move, aim, true))
+		for ev in w.events:
+			if ev.type == "shot" or ev.type == "swing":
+				return i + 1
+	return -1
 
 func test_corridor_walls_block_player() -> void:
 	var w := SimWorld.new(1)
@@ -166,10 +176,10 @@ func test_projectile_kills_grunt() -> void:
 	var w := SimWorld.new(1)
 	w.spawn(&"player", Vector2(0, 9))
 	var g := w.spawn(&"grunt", Vector2(0, 2))
-	run(w, 1.0, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	run(w, 1.5, cmd(Vector2.ZERO, Vector2(0, -20), true))
 	check(not g.alive and w.stats.kills == 1 and w.stats.shots_hit == 3,
 		"three hits kill a grunt (alive=%s hits=%d)" % [g.alive, w.stats.shots_hit])
-	check(w.projectiles.size() <= int(w.tuning.proj_ttl / w.tuning.fire_interval) + 1, "bullets expire")
+	check(w.projectiles.size() <= int(w.tuning.proj_ttl / w.fire_interval()) + 1, "bullets expire")
 
 func test_tuning_roundtrip() -> void:
 	var path := OS.get_user_data_dir().path_join("sim_test_tuning.json")
@@ -299,10 +309,10 @@ func test_brute_cone() -> void:
 	var p := w.spawn(&"player", Vector2(0, 0))
 	w.set_weapon("brute")
 	var near := _still_grunt(w, Vector2(0, -1.5))
-	var far := _still_grunt(w, Vector2(0, -1.8))
+	var far := _still_grunt(w, Vector2(-1.032, -1.474))   # 1.8 away, 35 degrees off: in the cone, out of range
 	var side := _still_grunt(w, Vector2(1.3, -0.75))   # 1.5 away, 60 degrees off the aim
 	var near_z := near.pos.y
-	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	check(_trigger(w) == 14, "the swing lands after the 0.22 s windup (tick 14 at 60 Hz)")
 	var expected := w.tuning.proj_damage * 2.5
 	check(near.hp == near.hp_max - expected, "cone hits at 1.5 for 2.5x damage (hp=%.0f)" % near.hp)
 	check(far.hp == far.hp_max, "cone misses at 1.8")
@@ -316,8 +326,8 @@ func test_brute_cone() -> void:
 	var z0 := p.pos.y
 	run(w, 0.2, cmd())
 	check(absf((z0 - p.pos.y) - 0.8) < 0.001, "lunge covers exactly 0.8 along the aim (%.3f)" % (z0 - p.pos.y))
-	check(_count_swings(w, 0.25) == 0, "cadence: no second swing before 0.5 s")
-	check(_count_swings(w, 0.1) == 1, "second swing after 0.5 s")
+	check(_count_swings(w, 0.4) == 0, "cadence: no second swing before 0.6 s (0.45 recovery + 0.22 windup)")
+	check(_count_swings(w, 0.1) == 1, "second swing by 0.7 s")
 
 func _count_swings(w: SimWorld, seconds: float) -> int:
 	var n := 0
@@ -335,7 +345,7 @@ func test_technomancer_blast() -> void:
 	# Shot flies 8 u/s for 1.5 s from z=8.4 and bursts at z=-3.6.
 	var inside := _still_grunt(w, Vector2(1.3, -3.6))
 	var outside := _still_grunt(w, Vector2(-1.5, -3.6))
-	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	check(_trigger(w) == 18, "the shot leaves after the 0.30 s windup (tick 18)")
 	check(w.projectiles.size() == 1 and is_equal_approx(w.projectiles.values()[0].blast_radius, 1.4), "technomancer fires a blast projectile (radius 1.4)")
 	var explosions := []
 	for i in 100:
@@ -346,13 +356,13 @@ func test_technomancer_blast() -> void:
 	check(explosions.size() == 1 and is_equal_approx(explosions[0].radius, 1.4), "one explosion at end of life (%d)" % explosions.size())
 	check(inside.hp < inside.hp_max, "explosion hits at 1.3 (hp=%.1f)" % inside.hp)
 	check(outside.hp == outside.hp_max, "explosion misses at 1.5")
-	check(is_equal_approx(w.fire_interval(), 0.8), "technomancer cadence is 0.8 s with the default tuning")
+	check(is_equal_approx(w.fire_interval(), 0.85), "technomancer cadence is 0.30 + 0.55 = 0.85 s, whatever the tuning")
 	# Center damage: a grunt right under the burst takes 2x.
 	var w2 := SimWorld.new(1)
 	w2.spawn(&"player", Vector2(0, 9))
 	w2.set_weapon("technomancer")
 	var g := _still_grunt(w2, Vector2(0, 5))
-	w2.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	_trigger(w2)
 	run(w2, 0.5, cmd())
 	var taken := g.hp_max - g.hp
 	check(is_equal_approx(taken, w2.tuning.proj_damage * 2.0), "direct contact burst deals the full 2x (%.1f)" % taken)
@@ -411,18 +421,18 @@ func test_body_stats() -> void:
 	check(JSON.stringify(w.tuning.to_dict()) == t_before, "body stats never touch the tuning")
 	# Brute swing grants 0.12 s of i-frames; the other profiles none.
 	w.restart_wave()
-	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	_trigger(w)
 	check(w.is_invulnerable() and absf(w.iframes_t - 0.12) < 0.001, "brute swing grants 0.12 s i-frames (%.3f)" % w.iframes_t)
 	var dodged: bool = (not w.damage(p.id, 10.0)) and w.stats.dodged == 1
 	check(dodged, "a hit during the swing is dodged")
 	w.set_weapon("hunter")
 	w.restart_wave()
-	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	_trigger(w)
 	check(not w.is_invulnerable(), "hunter shot grants no i-frames")
 	var w2 := SimWorld.new(1)
 	w2.set_weapon("technomancer")
 	w2.spawn(&"player", Vector2(0, 9))
-	w2.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	_trigger(w2)
 	check(not w2.is_invulnerable() and is_equal_approx(w2.projectiles.values()[0].vel.length(), w2.tuning.proj_speed * 0.4),
 		"technomancer: no i-frames, projectile at 0.4x speed (%.1f)" % w2.projectiles.values()[0].vel.length())
 
@@ -430,34 +440,42 @@ func test_attack_move() -> void:
 	var w := SimWorld.new(1)
 	w.tuning.attack_move_mult = 0.55
 	var p := w.spawn(&"player", Vector2(0, 9))
-	# Hunter: shooting while walking up the corridor is 0.55x speed as long as fire_cd > 0
-	# (the trigger tick itself still moves at full speed: fire happens after movement).
+	# Hunter: walking up the corridor with the button held is 0.55x speed from the second tick
+	# on (the trigger tick itself moves at full speed: the windup starts after movement), and
+	# stays slow across windup, recovery and the auto-repeated windup.
 	var z0 := p.pos.y
 	run(w, 0.5, cmd(Vector2(0, -1), Vector2(0, -20), true))
 	var walked := z0 - p.pos.y
 	var expected := DT * w.tuning.player_speed + (0.5 - DT) * w.tuning.player_speed * 0.55
 	check(absf(walked - expected) < 0.01, "hunter walks at 0.55x while firing (%.2f)" % walked)
-	w.fire_cd = 0.0
+	run(w, 0.5, cmd(Vector2(0, -1)))   # button released: the recovery runs out
+	check(not w.is_attacking(), "released: idle again after the recovery")
 	z0 = p.pos.y
 	run(w, 0.2, cmd(Vector2(0, -1)))
-	check(absf((z0 - p.pos.y) - 0.2 * w.tuning.player_speed) < 0.01, "full speed again once fire_cd is spent")
-	# Brute: during the 9 swing ticks, lunge plus steering at 0.55x; after it, full speed even with fire_cd > 0.
+	check(absf((z0 - p.pos.y) - 0.2 * w.tuning.player_speed) < 0.01, "full speed again once idle")
+	# Brute: lunge plus steering at 0.55x over the 9 swing ticks, still 0.55x for the rest of
+	# the recovery, full speed once idle.
 	w.set_weapon("brute")
-	p.pos = Vector2(0, 0)
-	w.step(DT, cmd(Vector2(-1, 0), Vector2(0, -20), true))   # trigger tick: full-speed step, then the swing starts
+	p.pos = Vector2(2.5, 0)   # room to walk west without meeting the corridor wall
+	_trigger(w, Vector2(0, -2000), Vector2(-1, 0))   # windup steps at 0.55x along x; the lunge goes straight south
 	var x0 := p.pos.x
+	var zh := p.pos.y
 	run(w, 0.15, cmd(Vector2(-1, 0)))
-	check(absf((x0 - p.pos.x) - 0.15 * w.tuning.player_speed * 0.55) < 0.01 and absf(p.pos.y + 0.8) < 0.01,
-		"brute swing: lunge 0.8 plus 0.55x steering (dx=%.3f z=%.2f)" % [x0 - p.pos.x, p.pos.y])
-	check(w.swing_t <= 0.0, "swing is over after 0.15 s")
+	check(absf((x0 - p.pos.x) - 0.15 * w.tuning.player_speed * 0.55) < 0.01 and absf((zh - p.pos.y) - 0.8) < 0.01,
+		"brute swing: lunge 0.8 plus 0.55x steering (dx=%.3f dz=%.2f)" % [x0 - p.pos.x, zh - p.pos.y])
+	check(w.swing_t <= 0.0 and w.attack_phase == &"recovery", "lunge over after 0.15 s, still recovering")
+	x0 = p.pos.x
+	run(w, 0.25, cmd(Vector2(-1, 0)))
+	check(w.is_attacking() and absf((x0 - p.pos.x) - 0.25 * w.tuning.player_speed * 0.55) < 0.01, "brute stays at 0.55x through the recovery")
+	run(w, 0.1, cmd(Vector2(-1, 0)))
 	x0 = p.pos.x
 	run(w, 0.2, cmd(Vector2(-1, 0)))
-	check(w.fire_cd > 0.0 and absf((x0 - p.pos.x) - 0.2 * w.tuning.player_speed) < 0.01, "brute moves at full speed between swings")
-	# Technomancer: unaffected.
+	check(not w.is_attacking() and absf((x0 - p.pos.x) - 0.2 * w.tuning.player_speed) < 0.01, "brute moves at full speed once idle")
+	# Technomancer: slowed like the others (every profile commits to its window).
 	w.set_weapon("technomancer")
 	p.pos = Vector2(0, 0)
-	run(w, 0.3, cmd(Vector2(0, -1), Vector2(0, -20), true))
-	check(absf(-p.pos.y - 0.3 * w.tuning.player_speed) < 0.01, "technomancer keeps full speed while firing")
+	run(w, 0.5, cmd(Vector2(0, -1), Vector2(0, -20), true))
+	check(absf(-p.pos.y - expected) < 0.01, "technomancer is slowed too while firing (%.2f)" % -p.pos.y)
 	check(SimTuning.keys().has("attack_move_mult") and SimTuning.new().attack_move_mult == 1.0, "attack_move_mult is a tuning key, default 1.0")
 
 func _idle_grunt(w: SimWorld, pos: Vector2) -> SimEntity:
@@ -591,34 +609,33 @@ func test_provoke() -> void:
 
 func test_stats_mods() -> void:
 	var w := SimWorld.new(1)
-	w.tuning.fire_interval = 0.15
 	var st := w.player_stats
-	check(is_equal_approx(st.value("fire_rate"), 1.0 / 0.15) and is_equal_approx(w.fire_interval(), 0.15),
-		"0 mods: fire_rate is 1 / fire_interval (%.2f/s)" % st.value("fire_rate"))
+	check(is_equal_approx(st.value("fire_rate"), 1.0) and is_equal_approx(w.fire_interval(), 0.42),
+		"0 mods: fire_rate is 1, the hunter attacks every 0.12 + 0.30 s (%.2f)" % w.fire_interval())
 	check(is_equal_approx(st.value("player_speed"), w.tuning.player_speed) and is_equal_approx(st.value("proj_damage"), w.tuning.proj_damage),
 		"0 mods: every stat reads the tuning")
 	st.add(7, "fire_rate", 0.30)
-	check(is_equal_approx(st.value("fire_rate"), 1.0 / 0.15 * 1.3), "1 mod: +30 %% fire_rate (%.2f/s)" % st.value("fire_rate"))
-	check(is_equal_approx(w.fire_interval(), 0.15 / 1.3) and w.fire_interval() < 0.15, "+30 %% fire_rate shortens the interval to %.4f s" % w.fire_interval())
+	check(is_equal_approx(st.value("fire_rate"), 1.3), "1 mod: +30 %% fire_rate (×%.2f)" % st.value("fire_rate"))
+	check(is_equal_approx(w.fire_interval(), 0.42 / 1.3) and w.fire_interval() < 0.42, "+30 %% fire_rate shortens the window to %.4f s" % w.fire_interval())
 	st.add(8, "fire_rate", 0.30)
-	check(is_equal_approx(st.value("fire_rate"), 1.0 / 0.15 * 1.6), "2 mods: pct adds up to +60 %% (%.2f/s)" % st.value("fire_rate"))
+	check(is_equal_approx(st.value("fire_rate"), 1.6), "2 mods: pct adds up to +60 %% (×%.2f)" % st.value("fire_rate"))
 	st.add(9, "proj_damage", 0.0, 5.0)
 	check(is_equal_approx(st.value("proj_damage"), w.tuning.proj_damage + 5.0), "flat mod adds after the pct")
 	st.add(10, "proj_damage", 0.5, 0.0)
 	check(is_equal_approx(st.value("proj_damage"), w.tuning.proj_damage * 1.5 + 5.0), "tuning × (1 + Σ pct) + Σ flat")
 	st.remove_source(7)
-	check(is_equal_approx(st.value("fire_rate"), 1.0 / 0.15 * 1.3), "removing a source drops its mod")
-	w.tuning.fire_interval = 0.3
-	check(is_equal_approx(st.value("fire_rate"), 1.0 / 0.3 * 1.3), "stats follow the live tuning")
-	# The weapon profile is a modifier too: brute is 0.5 s at the default 0.15, and an item's
-	# +30 % reads +30 % on top of it (0.5 / 1.3), not +30 % of the hunter's rate.
+	check(is_equal_approx(st.value("fire_rate"), 1.3), "removing a source drops its mod")
+	w.tuning.proj_damage = 7.0
+	check(is_equal_approx(st.value("proj_damage"), 7.0 * 1.5 + 5.0), "stats follow the live tuning")
+	# The cadence is the profile's own window: brute is 0.22 + 0.45 s, and an item's +30 %
+	# reads +30 % on top of it (0.67 / 1.3), not +30 % of the hunter's rate.
 	var w2 := SimWorld.new(1)
 	w2.set_weapon("brute")
-	check(is_equal_approx(w2.fire_interval(), 0.5) and w2.player_stats.has_source("weapon"), "brute: weapon mods give 0.5 s (%.3f)" % w2.fire_interval())
+	check(is_equal_approx(w2.fire_interval(), 0.67) and w2.player_stats.has_source("weapon"), "brute: 0.67 s per swing (%.3f)" % w2.fire_interval())
 	w2.player_stats.add(1, "fire_rate", 0.30)
-	check(is_equal_approx(w2.fire_interval(), 0.5 / 1.3), "brute + item: 0.5 / 1.3 s (%.3f)" % w2.fire_interval())
+	check(is_equal_approx(w2.fire_interval(), 0.67 / 1.3), "brute + item: 0.67 / 1.3 s (%.3f)" % w2.fire_interval())
 	w2.set_weapon("hunter")
-	check(is_equal_approx(w2.fire_interval(), 0.15 / 1.3), "switching weapons keeps the item mods (%.3f)" % w2.fire_interval())
+	check(is_equal_approx(w2.fire_interval(), 0.42 / 1.3), "switching weapons keeps the item mods (%.3f)" % w2.fire_interval())
 	# In play: shots per second go up by 30 %.
 	var w3 := SimWorld.new(1)
 	w3.spawn(&"player", Vector2(0, 9))
@@ -628,7 +645,7 @@ func test_stats_mods() -> void:
 	w4.spawn(&"player", Vector2(0, 9))
 	w4.player_stats.add(1, "fire_rate", 0.30)
 	run(w4, 3.0, cmd(Vector2.ZERO, Vector2(0, -20), true))
-	# Ticks quantize the interval (9 ticks → 7 ticks at 60 Hz), so the ratio is 1.29–1.44.
+	# Ticks quantize the window (0.42 → 0.323 s at 60 Hz), so the ratio sits near 1.4.
 	var ratio := float(w4.stats.shots) / float(base_shots)
 	check(w4.stats.shots > base_shots and ratio > 1.25 and ratio < 1.5,
 		"in play: %d shots in 3 s instead of %d" % [w4.stats.shots, base_shots])
@@ -1019,14 +1036,14 @@ func test_items_persist() -> void:
 	check(not w.items.has(it_floor.id), "R: the floor is cleared")
 	w.start_wave(3)
 	check(w.equipped.get(&"weapon") == it and w.inventory.size() == 1, "N: both stay too")
-	var base := SimStats.new(w.tuning).fire_interval()
+	var base := w.weapon.windup + w.weapon.recovery   # hunter, no item
 	w.reset_run()
 	check(w.equipped.is_empty() and w.inventory.is_empty() and not w.player_stats.has_source(it.id) and is_equal_approx(w.fire_interval(), base) and w.wave == 1,
 		"0: back to wave 1, equipment and bag cleared (%.4f s)" % w.fire_interval())
 	check(w.player_stats.has_source("weapon") or w.weapon.name == "hunter", "0: the weapon profile is untouched")
 	w.set_weapon("brute")
 	w.reset_run()
-	check(w.weapon.name == "brute" and is_equal_approx(w.fire_interval(), base * 0.5 / 0.15), "0 keeps the weapon profile and its mods")
+	check(w.weapon.name == "brute" and is_equal_approx(w.fire_interval(), 0.67), "0 keeps the weapon profile and its window")
 	var d: Dictionary = w.to_dict()
 	check(d.has("equipped") and d.equipped is Dictionary and d.has("inventory") and d.inventory is Array, "to_dict: equipment by slot, inventory list")
 
@@ -1305,3 +1322,75 @@ func test_shield_window() -> void:
 	var hp2 := e2.hp
 	var blocked2 := _events_of(w2, "blocked", 0.6, cmd(Vector2.ZERO, Vector2(0, -20), true))
 	check(blocked2.size() >= 1 and hp2 - e2.hp < w2.player_stats.value("proj_damage"), "control: frontal shots are blocked")
+
+## Attack window: windup -> hit -> recovery, per profile, scaled by fire_rate, cut by a dash.
+## Stepped at 10 ms so the phase lengths are tick multiples and the hit times are exact.
+func test_attack_window() -> void:
+	var fine := 0.01
+	var hits_of := func(w: SimWorld, seconds: float, c: Command) -> Array:
+		var out := []
+		for i in int(round(seconds / fine)):
+			w.step(fine, c)
+			for ev in w.events:
+				if ev.type == "shot" or ev.type == "swing":
+					out.append(snappedf(w.time, 0.001))
+		return out
+	for spec in [["hunter", 0.12, 0.30], ["brute", 0.22, 0.45], ["technomancer", 0.30, 0.55]]:
+		var w := SimWorld.new(1)
+		w.spawn(&"player", Vector2(0, 9))
+		w.set_weapon(spec[0])
+		check(is_equal_approx(w.weapon.windup, spec[1]) and is_equal_approx(w.weapon.recovery, spec[2])
+			and is_equal_approx(w.attack_windup(), spec[1]) and is_equal_approx(w.attack_recovery(), spec[2]),
+			"%s: windup %.2f, recovery %.2f" % [spec[0], spec[1], spec[2]])
+		w.step(fine, cmd(Vector2.ZERO, Vector2(0, -20), true))
+		var windups := w.events.filter(func(ev): return ev.type == "windup")
+		check(windups.size() == 1 and windups[0].id == w.player_id and windups[0].profile == spec[0] and w.attack_phase == &"windup",
+			"%s: windup event on the trigger tick" % spec[0])
+		var hits: Array = hits_of.call(w, 2.0, cmd(Vector2.ZERO, Vector2(0, -20), true))
+		var t1: float = spec[1]
+		var t2: float = spec[1] + spec[2] + spec[1]
+		check(hits.size() >= 2 and is_equal_approx(hits[0], t1) and is_equal_approx(hits[1], t2),
+			"%s: held from t=0, hits at %.2f and %.2f (%s)" % [spec[0], t1, t2, hits.slice(0, 2)])
+		check(w.to_dict().attack.has("phase") and w.to_dict().attack.windup == spec[1], "%s: to_dict carries the window" % spec[0])
+	# Pressing again during the recovery never fires early: release at the hit, press at half
+	# the recovery, the next hit still comes at windup + recovery + windup.
+	var w := SimWorld.new(1)
+	w.spawn(&"player", Vector2(0, 9))
+	var first: Array = hits_of.call(w, 0.12, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	hits_of.call(w, 0.15, cmd())
+	var late: Array = hits_of.call(w, 1.0, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	check(first.size() == 1 and late.size() >= 1 and is_equal_approx(late[0], 0.54), "re-pressing mid-recovery: next hit still at 0.54 (%s)" % [late.slice(0, 1)])
+	# A dash at half the windup cancels the shot: no projectile, no shot event, idle; held
+	# through the dash, the attack restarts once the dash ends.
+	var w2 := SimWorld.new(1)
+	w2.spawn(&"player", Vector2(0, 9))
+	var pre: Array = hits_of.call(w2, 0.06, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	check(pre.is_empty() and w2.attack_phase == &"windup", "mid-windup: no shot yet")
+	w2.step(fine, cmd(Vector2(0, -1), Vector2(0, -20), true, true))
+	check(w2.is_dashing() and w2.attack_phase == &"idle" and w2.projectiles.is_empty(), "dash at windup/2: the shot is lost, phase idle")
+	var after: Array = hits_of.call(w2, w2.tuning.dash_time, cmd(Vector2(0, -1), Vector2(0, -20), true))
+	check(after.is_empty() and w2.projectiles.is_empty(), "no shot during the dash")
+	after = hits_of.call(w2, 0.2, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	check(after.size() == 1 and w2.stats.shots == 1, "held through the dash: a fresh windup fires after it (%d shot)" % w2.stats.shots)
+	# A dash during the recovery cuts it: idle at once, and a held button restarts the windup
+	# as soon as the dash ends.
+	var w3 := SimWorld.new(1)
+	w3.spawn(&"player", Vector2(0, 9))
+	hits_of.call(w3, 0.20, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	check(w3.attack_phase == &"recovery", "0.08 s into the recovery")
+	w3.step(fine, cmd(Vector2(0, -1), Vector2(0, -20), false, true))
+	check(w3.attack_phase == &"idle" and w3.attack_t == 0.0, "dash cancels the recovery")
+	# The dash tick covers (0.20, 0.21]; the dash owns dash_time from there, then the windup.
+	var dash_hits: Array = hits_of.call(w3, w3.tuning.dash_time + 0.12, cmd(Vector2(0, -1), Vector2(0, -20), true))
+	check(dash_hits.size() == 1 and is_equal_approx(dash_hits[0], 0.20 + w3.tuning.dash_time + 0.12), "next hit = dash end + windup (%s)" % [dash_hits])
+	# fire_rate × 1.5 shortens both phases proportionally.
+	var w4 := SimWorld.new(1)
+	w4.spawn(&"player", Vector2(0, 9))
+	w4.player_stats.add(1, "fire_rate", 0.5)
+	check(is_equal_approx(w4.attack_windup(), 0.08) and is_equal_approx(w4.attack_recovery(), 0.2), "fire_rate ×1.5: windup 0.08, recovery 0.20")
+	var fast: Array = hits_of.call(w4, 1.0, cmd(Vector2.ZERO, Vector2(0, -20), true))
+	check(fast.size() >= 2 and is_equal_approx(fast[0], 0.08) and is_equal_approx(fast[1], 0.36), "fire_rate ×1.5: hits at 0.08 and 0.36 (%s)" % [fast.slice(0, 2)])
+	# A weapon switch mid-window drops the window.
+	w4.set_weapon("brute")
+	check(w4.attack_phase == &"idle" and w4.swing_t == 0.0, "switching profiles cancels the window")
+	check(not SimTuning.keys().has("fire_interval"), "fire_interval is no longer a tuning key")

@@ -13,7 +13,6 @@ const SPECS := [
 	["dash_time", 0.05, 0.5, 0.01],
 	["dash_cooldown", 0.0, 2.0, 0.05],
 	["dash_iframes", 0.0, 1.0, 0.01],
-	["fire_interval", 0.03, 1.0, 0.01],
 	["proj_speed", 5.0, 60.0, 0.5],
 	["proj_damage", 1.0, 100.0, 1.0],
 	["proj_ttl", 0.2, 5.0, 0.1],
@@ -69,15 +68,15 @@ var dash_time := 0.18
 var dash_cooldown := 0.6
 var dash_iframes := 0.25      # invulnerability window, starts with the dash, outlasts it a little
 
-# Player weapon: a plain repeater. Three hits per grunt.
-var fire_interval := 0.15
+# Player weapon: a plain repeater. Three hits per grunt. The cadence is not here: windup and
+# recovery are the weapon profile's identity (WeaponProfile), bent by the fire_rate stat.
 var proj_speed := 20.0
 var proj_damage := 10.0
 var proj_ttl := 1.5
 var proj_radius := 0.25
 var muzzle_offset := 0.6
 var knockback := 0.8          # displacement applied to whoever takes a hit, along the hit direction
-var attack_move_mult := 1.0   # move speed while attacking (hunter: fire_cd > 0, brute: during the swing)
+var attack_move_mult := 1.0   # move speed during an attack's windup and recovery, every profile
 
 # Grunt: walks at the player, telegraphs, hits at contact, recovers.
 var grunt_hp := 30.0

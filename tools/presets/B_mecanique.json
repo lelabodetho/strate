@@ -3,7 +3,6 @@
   "dash_iframes": 0.3,
   "dash_speed": 26.0,
   "dash_time": 0.2,
-  "fire_interval": 0.22,
   "grunt_aggro": 12.0,
   "grunt_damage": 20.0,
   "grunt_hit_radius": 0.55,

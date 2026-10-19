@@ -40,8 +40,11 @@ var entities: Dictionary = {}   # id -> SimEntity
 var projectiles: Dictionary = {}  # id -> SimProjectile (removed when they die)
 var player_id: int = -1
 var _next_id: int = 1
-var fire_cd: float = 0.0
-var swing_t: float = 0.0        # > 0 while the brute's swing (and lunge) plays
+# Player attack window (see WeaponProfile): idle -> windup -> hit -> recovery -> idle.
+const ATTACK_EPS := 1e-6
+var attack_phase: StringName = &"idle"   # &"idle" | &"windup" | &"recovery"
+var attack_t: float = 0.0       # seconds left in the current phase
+var swing_t: float = 0.0        # > 0 while the brute's lunge plays (start of recovery)
 var swing_dir: Vector2 = Vector2.DOWN
 var wave: int = 0
 var next_wave_t: float = 0.0   # > 0 while counting down to the next wave
@@ -53,6 +56,7 @@ var inventory: Array[SimItem] = []    # the bag, in pickup order, capped by tuni
 
 # What happened during the last step(), for the view and the harness. Cleared every step.
 # {type:"hit", target, pos, dir, damage} {type:"kill", target, pos} {type:"dodge", pos}
+# {type:"windup", id, profile}  the player's attack started its windup
 # {type:"shot", pos, dir} {type:"impact", pos} {type:"wave_cleared", wave}
 # {type:"swing", pos, dir} {type:"explosion", pos, radius} {type:"stagger", target}
 # {type:"aggro", id} {type:"deaggro", id}
@@ -246,7 +250,7 @@ func restart_wave() -> void:
 	dash_t = 0.0
 	dash_cd = 0.0
 	iframes_t = 0.0
-	fire_cd = 0.0
+	_cancel_attack()
 	start_wave(maxi(1, wave))
 
 ## Back to wave 1 with a fresh player: equipment and bag are dropped too. Only R keeps them.
@@ -292,8 +296,7 @@ func set_weapon(n: String) -> void:
 	weapon = WeaponProfile.by_name(n)
 	player_stats.remove_source("weapon")
 	player_stats.add_all("weapon", weapon.mods)
-	fire_cd = 0.0
-	swing_t = 0.0
+	_cancel_attack()
 	_refresh_body()
 
 ## Body values derived from stats (max hp, radius) after the modifiers changed.
@@ -307,9 +310,25 @@ func _refresh_body() -> void:
 	p.radius = player_stats.value("player_radius")
 	p.hit_radius = p.radius
 
-## Seconds between two player attacks, from the fire_rate stat.
+## The weapon's windup, scaled by the fire_rate stat.
+func attack_windup() -> float:
+	return maxf(0.001, weapon.windup / maxf(player_stats.value("fire_rate"), 0.001))
+
+## The weapon's recovery, scaled by the fire_rate stat.
+func attack_recovery() -> float:
+	return maxf(0.001, weapon.recovery / maxf(player_stats.value("fire_rate"), 0.001))
+
+## Seconds between two player attacks while holding the button: windup + recovery.
 func fire_interval() -> float:
-	return player_stats.fire_interval()
+	return attack_windup() + attack_recovery()
+
+func is_attacking() -> bool:
+	return attack_phase != &"idle"
+
+func _cancel_attack() -> void:
+	attack_phase = &"idle"
+	attack_t = 0.0
+	swing_t = 0.0
 
 func step(dt: float, cmd: Command) -> void:
 	tick += 1
@@ -349,26 +368,26 @@ func _step_player(dt: float, p: SimEntity, cmd: Command) -> void:
 		dash_t = player_stats.value("dash_time")
 		dash_cd = player_stats.value("dash_cooldown")
 		iframes_t = player_stats.value("dash_iframes")
+		_cancel_attack()   # a windup's shot is lost, a recovery is cut short
 
-	if dash_t > 0.0:
+	# The dash owns the whole tick it ends on; the attack may restart on the next one.
+	var dashing := dash_t > 0.0
+	if dashing:
 		dash_t -= dt
 		p.vel = dash_dir * player_stats.value("dash_speed")
-	elif swing_t > 1e-6:
-		# Bounded so the lunge covers exactly `lunge` whatever the tick rounding; the epsilon
-		# keeps float residue from adding a tenth tick.
-		# Steering during the swing is allowed at attack_move_mult speed, on top of the lunge.
-		var t := minf(dt, swing_t)
-		swing_t -= dt
-		if swing_t < 1e-6:
-			swing_t = 0.0
-		p.vel = swing_dir * (weapon.lunge / weapon.swing_time) * (t / dt)
-		if weapon.attack_move:
-			p.vel += cmd.move * player_stats.value("player_speed") * player_stats.value("attack_move_mult")
 	else:
 		var speed := player_stats.value("player_speed")
-		if weapon.attack_move and weapon.kind != &"cone" and fire_cd > 0.0:
+		if is_attacking():
 			speed *= player_stats.value("attack_move_mult")
 		p.vel = cmd.move * speed
+		if swing_t > ATTACK_EPS:
+			# Bounded so the lunge covers exactly `lunge` whatever the tick rounding; the epsilon
+			# keeps float residue from adding a tenth tick. Steering rides on top of the lunge.
+			var t := minf(dt, swing_t)
+			swing_t -= dt
+			if swing_t < ATTACK_EPS:
+				swing_t = 0.0
+			p.vel += swing_dir * (weapon.lunge / weapon.swing_time) * (t / dt)
 
 	p.pos = level.resolve_circle(p.pos + p.vel * dt, p.radius)
 
@@ -376,14 +395,48 @@ func _step_player(dt: float, p: SimEntity, cmd: Command) -> void:
 	if to_aim.length() > 0.05:
 		p.facing = to_aim.normalized()
 
-	fire_cd = maxf(0.0, fire_cd - dt)
-	if cmd.attack and fire_cd <= 0.0 and not is_dashing():
-		fire_cd = fire_interval()
-		match weapon.kind:
-			&"cone":
-				_swing(p, p.facing)
-			_:
-				_fire(p, p.facing)
+	if not dashing:
+		_step_attack(dt, p, cmd)
+
+## The attack window. The tick's dt carries across a phase boundary, so a phase that ends
+## mid-tick hands the remainder to the next one and the hit lands at exactly windup seconds
+## after the trigger, whatever the tick length. Idle + attack held = a new windup at once
+## (auto-repeat), so a held button attacks every windup + recovery seconds, never faster.
+func _step_attack(dt: float, p: SimEntity, cmd: Command) -> void:
+	var left := dt
+	while left > 0.0:
+		match attack_phase:
+			&"idle":
+				if not cmd.attack:
+					return
+				attack_phase = &"windup"
+				attack_t = attack_windup()
+				_emit({"type": "windup", "id": p.id, "profile": weapon.name})
+			&"windup":
+				left = _advance_phase(left)
+				if attack_t <= 0.0:
+					match weapon.kind:
+						&"cone":
+							_swing(p, p.facing)
+						_:
+							_fire(p, p.facing)
+					attack_phase = &"recovery"
+					attack_t = attack_recovery()
+			&"recovery":
+				left = _advance_phase(left)
+				if attack_t <= 0.0:
+					attack_phase = &"idle"
+
+## Spend up to `left` seconds of the current phase; returns what is left of the tick.
+func _advance_phase(left: float) -> float:
+	var use := minf(left, attack_t)
+	attack_t -= use
+	left -= use
+	if attack_t < ATTACK_EPS:
+		attack_t = 0.0
+	if left < ATTACK_EPS:
+		left = 0.0
+	return left
 
 func _fire(owner: SimEntity, dir: Vector2) -> void:
 	var start := owner.pos + dir * player_stats.value("muzzle_offset")
@@ -402,7 +455,7 @@ func _fire(owner: SimEntity, dir: Vector2) -> void:
 	_emit({"type": "shot", "pos": start, "dir": dir})
 
 ## Brute: hit every grunt whose center is within cone_range and within half the cone angle
-## of the aim, then lunge forward for swing_time.
+## of the aim, then lunge forward for swing_time (the start of the recovery).
 func _swing(owner: SimEntity, dir: Vector2) -> void:
 	swing_t = weapon.swing_time
 	swing_dir = dir
@@ -833,6 +886,8 @@ func to_dict() -> Dictionary:
 		"wave_packs": wave_packs.map(func(c: Vector2): return [snappedf(c.x, 0.01), snappedf(c.y, 0.01)]),
 		"wave_fallbacks": wave_fallbacks,
 		"weapon": weapon.name,
+		"attack": {"phase": String(attack_phase), "t": snappedf(attack_t, 0.001),
+			"windup": snappedf(attack_windup(), 0.001), "recovery": snappedf(attack_recovery(), 0.001)},
 		"player_stats": player_stats.to_dict(),
 		"items": floor_items,
 		"equipped": worn,

@@ -6,8 +6,8 @@ extends RefCounted
 ## `mult` is the weapon's identity (cadence, damage, projectile speed) and compounds; `pct` is
 ## what items and buffs add, so two +30 % items read +60 %, whatever the weapon.
 ## Base values come from the tuning, except the derived ones below.
-##   fire_rate     shots per second, base 1 / tuning.fire_interval. A +30 % cadence bonus raises
-##                 fire_rate; SimWorld derives the interval from it.
+##   fire_rate     attack speed multiplier, base 1. A +30 % cadence bonus makes it 1.3; SimWorld
+##                 divides the weapon's windup and recovery by it.
 ##   damage_taken  multiplier on every hit the player takes, base 1.
 ##   attack_iframes  seconds of invulnerability when an attack starts, base 0.
 
@@ -39,7 +39,7 @@ func has_source(source: Variant) -> bool:
 func base(stat: String) -> float:
 	match stat:
 		"fire_rate":
-			return 1.0 / maxf(tuning.fire_interval, 0.001)
+			return 1.0
 		"damage_taken":
 			return 1.0
 		"attack_iframes":
@@ -59,10 +59,6 @@ func value(stat: String) -> float:
 			flat += m.flat
 	return base(stat) * mult * (1.0 + pct) + flat
 
-## Seconds between two attacks, derived from fire_rate.
-func fire_interval() -> float:
-	return 1.0 / maxf(value("fire_rate"), 0.001)
-
 func to_dict() -> Dictionary:
 	var list := []
 	for m in mods:
@@ -70,7 +66,6 @@ func to_dict() -> Dictionary:
 	return {
 		"mods": list,
 		"fire_rate": snappedf(value("fire_rate"), 0.001),
-		"fire_interval": snappedf(fire_interval(), 0.001),
 		"player_speed": snappedf(value("player_speed"), 0.001),
 		"player_hp": snappedf(value("player_hp"), 0.001),
 		"proj_damage": snappedf(value("proj_damage"), 0.001),

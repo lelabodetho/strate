@@ -79,7 +79,7 @@ func _process(dt: float) -> void:
 	var w: SimWorld = GameState.world
 	var p: SimEntity = w.player()
 	var hp := int(round(p.hp)) if p != null else 0
-	var line := "Vague %d · %d grunts · %d PV · %s · cadence %.1f/s" % [w.wave, w.grunts_alive(), hp, w.weapon.name, w.player_stats.value("fire_rate")]
+	var line := "Vague %d · %d grunts · %d PV · %s · cadence %.2f s" % [w.wave, w.grunts_alive(), hp, w.weapon.name, w.fire_interval()]
 	var preset := GameState.preset_label()
 	if not preset.is_empty():
 		line += " · " + preset

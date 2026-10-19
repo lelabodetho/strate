@@ -2,11 +2,16 @@ class_name EntityView
 extends Node3D
 ## Mirrors one SimEntity. Reads only; never writes to the sim.
 ## Feedback (flash, death pop, windup telegraph) is driven by sim state and sim events.
+## Player: the attack windup lifts and brightens the body (orange, never red: it is not a
+## threat), the recovery settles it back a little under its size.
 ## Elites: bigger darker body with a DANGER ring on the ground; shielded = a steel plate in
 ## front, volatile = body pulsing toward DANGER, fast = thinner and taller. Never orange.
 
 const PLAYER_COLOR := Color(0.85, 0.45, 0.2)
 const PLAYER_DASH_COLOR := Color(1.0, 0.85, 0.5)
+const PLAYER_WINDUP_COLOR := Color(1.0, 0.62, 0.3)
+const PLAYER_WINDUP_SCALE := 1.15
+const PLAYER_RECOVERY_SCALE := 0.94
 const GRUNT_COLOR := Color(0.5, 0.5, 0.55)
 const ELITE_COLOR := Color(0.3, 0.31, 0.36)
 const DANGER_COLOR := Color(0.9, 0.15, 0.1)
@@ -34,6 +39,7 @@ var _mat: StandardMaterial3D
 var _kind: StringName
 var _state: StringName = &"idle"
 var _dashing := false
+var _attack_phase: StringName = &"idle"   # player only
 var _alive := true
 var _flash_t := 0.0
 var _flash_color := Color.WHITE
@@ -76,11 +82,12 @@ func setup(e: SimEntity) -> void:
 			_mesh.add_child(plate)
 			plate.position.y -= _mesh.position.y
 
-func sync(e: SimEntity, dashing: bool) -> void:
+func sync(e: SimEntity, dashing: bool, attack_phase: StringName = &"idle") -> void:
 	position = Vector3(e.pos.x, 0.0, e.pos.y)
 	rotation.y = atan2(-e.facing.x, -e.facing.y)
 	_state = e.state
 	_dashing = dashing
+	_attack_phase = attack_phase
 	if e.alive and not _alive:
 		# Revived (wave restart): stand back up.
 		_fallen = false
@@ -128,6 +135,11 @@ func _process(dt: float) -> void:
 			s = lerpf(1.0, DEATH_SCALE, _death_t / DEATH_TIME)
 	elif _state == &"windup":
 		s = WINDUP_SCALE
+	elif _kind == &"player" and not _dashing:
+		if _attack_phase == &"windup":
+			s = PLAYER_WINDUP_SCALE
+		elif _attack_phase == &"recovery":
+			s = PLAYER_RECOVERY_SCALE
 	_mesh.scale = Vector3(s, s, s)
 	if _fallen:
 		# Lying on its back, head toward where it was facing.
@@ -140,7 +152,7 @@ func _process(dt: float) -> void:
 	if _fallen:
 		c = FALLEN_COLOR
 	elif _kind == &"player":
-		c = PLAYER_DASH_COLOR if _dashing else PLAYER_COLOR
+		c = PLAYER_DASH_COLOR if _dashing else (PLAYER_WINDUP_COLOR if _attack_phase == &"windup" else PLAYER_COLOR)
 	elif _state == &"windup":
 		c = WINDUP_COLOR
 	elif _elite:
