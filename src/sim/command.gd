@@ -7,6 +7,7 @@ var move: Vector2 = Vector2.ZERO   # normalized, world XZ plane
 var aim: Vector2 = Vector2.ZERO    # world XZ point under the cursor
 var attack: bool = false
 var dash: bool = false
+var interact: bool = false         # pressed this tick: pick up the nearest floor item
 
 func to_dict() -> Dictionary:
-	return {"move": [move.x, move.y], "aim": [aim.x, aim.y], "attack": attack, "dash": dash}
+	return {"move": [move.x, move.y], "aim": [aim.x, aim.y], "attack": attack, "dash": dash, "interact": interact}

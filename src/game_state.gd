@@ -8,10 +8,13 @@ extends Node
 ##   --seed=<n>            world seed (default 1)
 ##   --debug               view draws body radius and hit radius on the ground
 ##   --panel               open the tuning panel at start
+##   --panel-inv           open the inventory panel at start
 ## In capture mode live input is ignored; the command comes from these flags instead:
 ##   --move=x,z            held move vector
 ##   --aim=x,z             world point under the cursor (default: straight down the corridor)
 ##   --hold=attack         hold the attack button
+##   --pickup=<frame>      press interact (E) on that frame
+##   --equip=<index>       equip inventory[index] on the frame after --pickup
 ##   --dash=t1,t2,...      ticks on which dash is pressed
 ##   --restart=<frame>     call restart() on that capture frame (tests the death -> R flow)
 ##   --next=<frame>        call next_wave() on that capture frame
@@ -47,6 +50,8 @@ const RECENT_TICKS := 120
 var _frame: int = 0
 var _frozen: bool = false        # capture mode: the sim stops once the frame budget is spent
 var _restart_frame: int = -1
+var _pickup_frame: int = -1
+var _equip_index: int = -1
 var _next_frame: int = -1
 var _reset_frame: int = -1
 
@@ -89,6 +94,8 @@ func _ready() -> void:
 		for t in String(_args.get("dash", "")).split(",", false):
 			_dash_ticks.append(int(t))
 		_restart_frame = int(_args.get("restart", "-1"))
+		_pickup_frame = int(_args.get("pickup", "-1"))
+		_equip_index = int(_args.get("equip", "-1"))
 		_next_frame = int(_args.get("next", "-1"))
 		_reset_frame = int(_args.get("reset", "-1"))
 
@@ -104,6 +111,8 @@ func step(dt: float, cmd: Command) -> void:
 			next_wave()
 		if _frame == _reset_frame:
 			reset_waves()
+		if _frame == _pickup_frame + 1 and _equip_index >= 0 and _equip_index < world.inventory.size():
+			world.equip(world.inventory[_equip_index].id)
 	if not paused:
 		world.step(dt, cmd)
 		for ev in world.events:
@@ -140,9 +149,16 @@ func restart() -> void:
 func next_wave() -> void:
 	world.start_wave(world.wave + 1)
 
-## 0: back to wave 1 with a fresh player, items dropped. R keeps them.
+## 0: back to wave 1 with a fresh player, equipment and bag dropped. R keeps them.
 func reset_waves() -> void:
 	world.reset_run()
+
+# Inventory panel entry points: the UI never touches the sim directly.
+func equip_item(item_id: int) -> bool:
+	return world.equip(item_id)
+
+func drop_item(item_id: int) -> bool:
+	return world.drop(item_id)
 
 func has_arg(key: String) -> bool:
 	return _args.has(key)
@@ -239,6 +255,7 @@ func _scripted_command() -> Command:
 	c.aim = _vec_arg("aim", Vector2(0, -20))
 	c.attack = String(_args.get("hold", "")).split(",").has("attack")
 	c.dash = _dash_ticks.has(world.tick + 1)
+	c.interact = _frame == _pickup_frame
 	return c
 
 ## --drop=x,z[,rarity[,slot]]: a rolled item on the floor (world rng, so the seed decides it).

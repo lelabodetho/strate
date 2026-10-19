@@ -2,7 +2,7 @@
 
 ## Où on en est (19/10/2026)
 
-**État** : jalons 0, 1, 2, 2b, 2c bouclés, jalon 4 entamé (élites avec affixes, loot généré avec slots / rareté / paliers). Arène de vagues jouable au preset par défaut (`tools/presets/default.json`), rendu `mix` avec langage visuel orange = joueur / rouge = menace / couleur par rareté pour le loot. 223 tests headless.
+**État** : jalons 0, 1, 2, 2b, 2c bouclés, jalon 4 entamé (élites avec affixes, loot généré avec slots / rareté / paliers). Arène de vagues jouable au preset par défaut (`tools/presets/default.json`), rendu `mix` avec langage visuel orange = joueur / rouge = menace / couleur par rareté pour le loot. 235 tests headless.
 
 **Prochaine session : jouer.** Valider en jeu les deux briques du jalon 4 (listes « à valider » ci-dessous) avant d'empiler la suite.
 
@@ -318,12 +318,12 @@ Un item doit changer un **breakpoint**, pas une moyenne : 22 dégâts contre 80 
   1. **Pas d'affixe mort** : recul et vitesse de tir sortent de tous les pools (ce sont l'identité de l'arme, pas du loot). Chaque stat d'un pool change le combat.
   2. **Paliers bornés par la rareté** : série T1–T2 (60 / 40), modifié T1–T3 (50 / 35 / 15), relique T2–T3 (60 / 40). Une relique n'a jamais un +8 % ; une série n'a jamais le +25 % du breakpoint.
   3. **Garantie de rôle** : le premier affixe d'une arme modifiée ou relique est dégâts ou cadence, celui d'une armure PV ou dégâts subis ; les suivants dans le reste du pool, distincts. Les modules et les séries sont libres.
-- [x] **Équipement par swap**, pas d'inventaire : marcher sur un item l'équipe, l'ancien du slot tombe aux pieds du joueur (même id, mêmes affixes) et reste inerte tant qu'on n'en est pas sorti. La décision se prend avant de poser le pied, grâce à la ligne « Au sol : … » du HUD (3 u). R garde l'équipement, 0 le lâche.
+- [x] ~~Équipement par swap~~ → **sac minimal** (19/10, après la passe pools) : marcher sur un item ne fait rien, **E** ramasse le plus proche dans le sac (`inventory_size` 12, « sac plein » sinon), **I** ouvre le sac sur le tiers droit sans arrêter le monde (règle ARPG ; tir, dash et E coupés pendant). Dans le sac : les trois slots en haut, la liste en dessous avec ▲ / ▼ / = par affixe contre l'item porté du même slot, Entrée équipe (l'ancien revient au sac, ou aux pieds si plein), Suppr lâche aux pieds. Un item lâché reste inerte tant qu'on n'en est pas sorti. La ligne « Au sol : … · [E] ramasser » du HUD (3 u) reste la lecture à distance. R garde sac et équipement, 0 vide les deux. Aucun aléa dans le sac : le chemin de la seed ne bouge pas.
 - [x] Tables de drop dans le tuning : trash `item_drop_chance` 20 %, modifié à `drop_rare_chance` 20 % sinon série ; élite toujours, relique à `elite_drop_epic_chance` 30 % sinon modifié ; slot uniforme. Tous les tirages passent par le rng du monde et sont toujours tirés (l'item lui-même sur un sous-rng seedé par le monde) : activer ou couper le loot ne déplace aucun grunt.
 - [x] View : couleur par rareté — série blanc acier, modifié cyan froid (0.4, 0.8, 0.9), relique orange avec lampe plus forte et halo plus large. Jamais de rouge (réservé à la menace). HUD : une ligne par slot dans la couleur de la rareté (« Arme · modifié · cadence +15 % · dégâts +8 % »), « Arme · — » grisé quand vide. Harnais : `--drop=x,z[,rareté[,slot]]`, `--drop2=…`.
-- [x] 31 checks de plus (223 au total) : roll seedé, breakpoint 3 / 4 tirs, swap et empilement, tables de drop sur 200 trash et 50 élites, persistance R / N / 0, les trois règles de pool sur 500 items et 200 armes / armures.
+- [x] 43 checks de plus (235 au total) : roll seedé, breakpoint 3 / 4 tirs, swap et empilement, tables de drop sur 200 trash et 50 élites, persistance R / N / 0, les trois règles de pool sur 500 items et 200 armes / armures.
 
-À valider en jeu : le swap sans confirmation — perd-on un bon item en marchant dessus par accident (si oui : ramassage sur touche, ou l'item ne s'équipe que s'il est meilleur) ; les +8 % se sentent-ils ou faut-il attendre un T2 ; la ligne « Au sol » suffit-elle pour lire un item à distance, ou faut-il un tooltip au-dessus de l'item ; la part de reliques (30 % par élite, une élite toutes les 2 vagues) est-elle assez rare pour compter ; faut-il une rareté au-dessus de relique avant les boss ou plutôt un affixe à effet (jalon 4, suite).
+À valider en jeu : le sac coupe-t-il le rythme (ouvrir I entre deux packs, ou plutôt un « équiper direct » sur E long) ; les flèches ▲ / ▼ suffisent-elles ou faut-il le delta chiffré ; les +8 % se sentent-ils ou faut-il attendre un T2 ; la ligne « Au sol » suffit-elle pour lire un item à distance, ou faut-il un tooltip au-dessus de l'item ; la part de reliques (30 % par élite, une élite toutes les 2 vagues) est-elle assez rare pour compter ; faut-il une rareté au-dessus de relique avant les boss ou plutôt un affixe à effet (jalon 4, suite).
 
 ### Jalon 4 — Contenu
 

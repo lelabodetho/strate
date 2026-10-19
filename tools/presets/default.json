@@ -35,6 +35,7 @@
   "affix_t1": 0.08,
   "affix_t2": 0.15,
   "affix_t3": 0.25,
+  "inventory_size": 12.0,
   "knockback": 1.0,
   "muzzle_offset": 0.6,
   "pack_spacing": 10.0,

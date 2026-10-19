@@ -35,7 +35,8 @@ func _init() -> void:
 	test_loot_pools()
 	test_breakpoint()
 	test_item_pickup()
-	test_equip_swap()
+	test_equip_from_bag()
+	test_drop_from_bag()
 	test_drop_tables()
 	test_items_persist()
 	test_elite_spawn()
@@ -57,13 +58,20 @@ func check(cond: bool, msg: String) -> void:
 	else:
 		print("[sim_test] ok: " + msg)
 
-func cmd(move := Vector2.ZERO, aim := Vector2(0, -20), attack := false, dash := false) -> Command:
+func cmd(move := Vector2.ZERO, aim := Vector2(0, -20), attack := false, dash := false, interact := false) -> Command:
 	var c := Command.new()
 	c.move = move
 	c.aim = aim
 	c.attack = attack
 	c.dash = dash
+	c.interact = interact
 	return c
+
+## Put an item under the player, pick it up with E and wear it.
+func _give(w: SimWorld, it: SimItem) -> void:
+	w.place_item(it, w.player().pos)
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, true))
+	w.equip(it.id)
 
 func run(w: SimWorld, seconds: float, c: Command) -> void:
 	for i in int(round(seconds / DT)):
@@ -780,10 +788,9 @@ func _shots_to_kill(tier: int) -> int:
 	t.grunt_hp = 80.0
 	t.grunt_speed = 0.5
 	var w := SimWorld.new(1, null, t)
-	var p := w.spawn(&"player", Vector2(0, 9))
+	w.spawn(&"player", Vector2(0, 9))
 	if tier > 0:
-		w.place_item(SimItem.make(&"weapon", &"common", [{"stat": "proj_damage", "tier": tier}], t), p.pos)
-	w.step(DT, cmd())
+		_give(w, SimItem.make(&"weapon", &"common", [{"stat": "proj_damage", "tier": tier}], t))
 	var g := w.spawn(&"grunt", Vector2(0, 3))
 	var hits := 0
 	for i in 240:
@@ -806,67 +813,105 @@ func test_item_pickup() -> void:
 	var it := w.place_item(SimItem.make(&"weapon", &"common", [{"stat": "fire_rate", "tier": 1}], w.tuning), Vector2(0, 6))
 	var reach := p.radius + SimWorld.PICKUP_REACH
 	var before := w.fire_interval()
-	# Standing just outside the reach: nothing.
+	# Walking over it without E: nothing.
+	run(w, 1.0, cmd(Vector2(0, -1)))
+	check(w.items.has(it.id) and w.inventory.is_empty() and w.equipped.is_empty() and p.pos.y < 6.0, "walking over an item does nothing")
+	# E out of reach: nothing.
 	p.pos = Vector2(0, 6 + reach + 0.05)
-	w.step(DT, cmd())
-	check(w.items.has(it.id) and w.equipped.is_empty(), "no pickup at %.2f" % (reach + 0.05))
-	# Walking in: equipped, mod added under the item's id, event emitted.
-	var equip_ev := {}
-	for i in 30:
-		w.step(DT, cmd(Vector2(0, -1)))
-		for ev in w.events:
-			if ev.type == "equip" and ev.id == it.id:
-				equip_ev = ev
-	check(not equip_ev.is_empty() and equip_ev.slot == &"weapon" and equip_ev.replaced_id == -1 and not w.items.has(it.id) and w.equipped.get(&"weapon") == it,
-		"walking over the item equips it and emits equip (empty slot: replaced_id -1)")
-	check(w.player_stats.has_source(it.id) and is_equal_approx(w.fire_interval(), before / 1.08),
-		"the mod is on the player under source = item id (%.4f s)" % w.fire_interval())
-	var armor := w.place_item(SimItem.make(&"armor", &"common", [{"stat": "player_hp", "tier": 1}], w.tuning), p.pos)
-	w.step(DT, cmd())
-	check(w.equipped.size() == 2 and w.equipped.get(&"armor") == armor and is_equal_approx(p.hp_max, w.tuning.player_hp * 1.08),
-		"another slot stacks: two items worn, hp max %.1f" % p.hp_max)
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, true))
+	check(w.items.has(it.id) and w.inventory.is_empty(), "E at %.2f: out of reach" % (reach + 0.05))
+	# E within reach: into the bag, not worn, no mods, pickup event.
+	p.pos = Vector2(0, 6 + reach - 0.05)
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, true))
+	var picks := w.events.filter(func(ev): return ev.type == "pickup")
+	check(picks.size() == 1 and picks[0].id == it.id and picks[0].slot == &"weapon" and not w.items.has(it.id)
+		and w.inventory.size() == 1 and w.inventory[0] == it and w.equipped.is_empty() and is_equal_approx(w.fire_interval(), before),
+		"E within reach: pickup event, the item is in the bag, nothing worn")
+	# Nearest first.
+	var near := w.place_item(SimItem.make(&"armor", &"common", [{"stat": "player_hp", "tier": 1}], w.tuning), p.pos + Vector2(0.2, 0))
+	var far := w.place_item(SimItem.make(&"module", &"common", [{"stat": "player_hp", "tier": 1}], w.tuning), p.pos + Vector2(0.5, 0))
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, true))
+	check(w.inventory.size() == 2 and w.inventory[1] == near and w.items.has(far.id), "two items in reach: the nearest goes first")
+	# Cap: a full bag refuses with inventory_full, the item stays on the floor.
+	w.tuning.inventory_size = 2.0
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, true))
+	var full := w.events.filter(func(ev): return ev.type == "inventory_full")
+	check(full.size() == 1 and w.inventory.size() == 2 and w.items.has(far.id), "full bag: inventory_full, the item stays")
+	w.tuning.inventory_size = 12.0
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, true))
+	check(w.inventory.size() == 3 and not w.items.has(far.id), "room again: taken")
+	# Held E only takes one item per press tick, never without the key.
+	w.place_item(SimItem.make(&"module", &"common", [{"stat": "player_hp", "tier": 1}], w.tuning), p.pos)
+	run(w, 0.5, cmd())
+	check(w.inventory.size() == 3, "no E, no pickup")
 
-func test_equip_swap() -> void:
+func test_equip_from_bag() -> void:
 	var w := SimWorld.new(1)
 	var p := w.spawn(&"player", Vector2(0, 9))
 	var base_rate := w.player_stats.value("fire_rate")
 	var base_dmg := w.player_stats.value("proj_damage")
-	var a := w.place_item(SimItem.make(&"weapon", &"common", [{"stat": "fire_rate", "tier": 1}], w.tuning), Vector2(0, 6))
-	var b := w.place_item(SimItem.make(&"weapon", &"rare", [{"stat": "proj_damage", "tier": 2}, {"stat": "player_speed", "tier": 1}], w.tuning), Vector2(0, 4))
-	var swap_pos := Vector2.ZERO
-	var ticks := 0
-	while w.equipped.get(&"weapon") != b and ticks < 120:
-		w.step(DT, cmd(Vector2(0, -1)))
-		ticks += 1
-		for ev in w.events:
-			if ev.type == "equip" and ev.id == b.id:
-				swap_pos = p.pos
-				check(ev.replaced_id == a.id, "equip event names the replaced item")
-	check(w.equipped.get(&"weapon") == b and w.items.has(a.id) and w.items[a.id] == a and a.pos == swap_pos and not a.armed,
-		"walking over the second weapon equips it; the first lies where the player stood, same id")
-	check(w.player_stats.has_source(b.id) and not w.player_stats.has_source(a.id)
+	var a := w.place_item(SimItem.make(&"weapon", &"common", [{"stat": "fire_rate", "tier": 1}], w.tuning), p.pos)
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, true))
+	var b := w.place_item(SimItem.make(&"weapon", &"rare", [{"stat": "proj_damage", "tier": 2}, {"stat": "player_speed", "tier": 1}], w.tuning), p.pos)
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, true))
+	check(w.inventory.size() == 2 and w.equipped.is_empty(), "two weapons in the bag")
+	check(w.equip(a.id) and w.equipped.get(&"weapon") == a and w.inventory.size() == 1 and w.inventory[0] == b
+		and w.player_stats.has_source(a.id) and is_equal_approx(w.player_stats.value("fire_rate"), base_rate * 1.08),
+		"equip(a): worn, out of the bag, its mods on the player")
+	var ev := w.events.filter(func(e): return e.type == "equip")
+	check(ev.size() == 1 and ev[0].id == a.id and ev[0].replaced_id == -1, "equip event, empty slot: replaced_id -1")
+	w.events.clear()
+	check(w.equip(b.id) and w.equipped.get(&"weapon") == b and w.inventory.size() == 1 and w.inventory[0] == a
+		and not w.player_stats.has_source(a.id) and w.player_stats.has_source(b.id)
 		and is_equal_approx(w.player_stats.value("fire_rate"), base_rate) and is_equal_approx(w.player_stats.value("proj_damage"), base_dmg * 1.15),
-		"the player's mods reflect only the equipped weapon")
-	# The dropped weapon stays unarmed under the player's feet, and re-arms once stepped off.
-	run(w, 0.1, cmd())
-	check(w.equipped.get(&"weapon") == b and not a.armed, "standing on the dropped item does not swap back")
-	run(w, 1.0, cmd(Vector2(0, -1)))
-	check(a.armed and w.items.has(a.id), "stepping off re-arms it")
+		"equip(b): a goes back to the bag, the player's mods reflect only b")
+	ev = w.events.filter(func(e): return e.type == "equip")
+	check(ev.size() == 1 and ev[0].replaced_id == a.id, "equip event names the replaced item")
+	check(not w.equip(999) and not w.equip(b.id), "unknown or worn id: equip refuses")
+	# Bag full when the replaced item comes back: it goes to the floor at the player's feet.
+	w.tuning.inventory_size = 1.0
+	var c := w.place_item(SimItem.make(&"weapon", &"common", [{"stat": "player_speed", "tier": 1}], w.tuning), Vector2(0, 5))
+	w.inventory.append(c)
+	w.items.erase(c.id)
+	check(w.equip(a.id) and w.equipped.get(&"weapon") == a and w.inventory.size() == 1 and w.inventory[0] == c
+		and w.items.has(b.id) and b.pos == p.pos and not b.armed,
+		"equip with a full bag: the replaced weapon lies at the player's feet, unarmed")
 	# Stacking: the same stat on two slots adds (weapon T1 + module T1 fire_rate = +16 %), and
 	# fire_rate × proj_damage multiply in the kill time.
 	var w2 := SimWorld.new(1)
-	var p2 := w2.spawn(&"player", Vector2(0, 9))
-	w2.place_item(SimItem.make(&"weapon", &"common", [{"stat": "fire_rate", "tier": 1}], w2.tuning), p2.pos)
-	w2.step(DT, cmd())
-	w2.place_item(SimItem.make(&"module", &"common", [{"stat": "fire_rate", "tier": 1}], w2.tuning), p2.pos)
-	w2.step(DT, cmd())
+	w2.spawn(&"player", Vector2(0, 9))
+	_give(w2, SimItem.make(&"weapon", &"common", [{"stat": "fire_rate", "tier": 1}], w2.tuning))
+	_give(w2, SimItem.make(&"module", &"common", [{"stat": "fire_rate", "tier": 1}], w2.tuning))
 	check(w2.equipped.size() == 2 and is_equal_approx(w2.player_stats.value("fire_rate"), base_rate * 1.16),
 		"weapon T1 + module T1 fire_rate = +16 %% additive (%.3f/s)" % w2.player_stats.value("fire_rate"))
-	w2.place_item(SimItem.make(&"module", &"common", [{"stat": "proj_damage", "tier": 2}], w2.tuning), p2.pos)
-	run(w2, 1.0, cmd(Vector2(0, -1)))   # steps off the swapped-out module, which stays on the floor
+	_give(w2, SimItem.make(&"module", &"common", [{"stat": "proj_damage", "tier": 2}], w2.tuning))
 	var dps := w2.player_stats.value("fire_rate") * w2.player_stats.value("proj_damage")
-	check(w2.items.size() == 1 and is_equal_approx(dps, base_rate * base_dmg * 1.08 * 1.15),
+	check(w2.inventory.size() == 1 and is_equal_approx(dps, base_rate * base_dmg * 1.08 * 1.15),
 		"fire_rate +8 %% × proj_damage +15 %%: damage per second × 1.242 (%.2f)" % dps)
+
+func test_drop_from_bag() -> void:
+	var w := SimWorld.new(1)
+	var p := w.spawn(&"player", Vector2(0, 9))
+	var a := w.place_item(SimItem.make(&"armor", &"rare", [{"stat": "player_hp", "tier": 2}, {"stat": "damage_taken", "tier": 1}], w.tuning), p.pos)
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, true))
+	w.events.clear()
+	check(w.inventory.size() == 1 and w.drop(a.id) and w.inventory.is_empty() and w.items.has(a.id) and a.pos == p.pos and not a.armed,
+		"drop: the item lies at the player's feet with its id")
+	var drops := w.events.filter(func(e): return e.type == "drop" and e.id == a.id)
+	check(drops.size() == 1 and drops[0].rarity == &"rare", "drop event with slot and rarity")
+	check(not w.drop(a.id), "dropping it twice refuses")
+	run(w, 0.3, cmd(Vector2.ZERO, Vector2(0, -20), false, false, true))
+	check(w.items.has(a.id) and w.inventory.is_empty(), "E on the spot does not take it back")
+	run(w, 0.5, cmd(Vector2(0, -1)))
+	check(a.armed, "stepping away re-arms it")
+	run(w, 0.5, cmd(Vector2(0, 1)))
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, true))
+	check(w.inventory.size() == 1 and w.inventory[0] == a, "back on it, E takes it again")
+	# No rng in the bag: pickup, equip and drop leave the seed's path untouched.
+	var state_before := w.rng.state
+	_give(w, SimItem.make(&"weapon", &"common", [{"stat": "fire_rate", "tier": 1}], w.tuning))
+	w.drop(a.id)
+	check(w.items.has(a.id) and w.equipped.size() == 1 and w.rng.state == state_before, "pickup / equip / drop never touch the world rng")
 
 func test_drop_tables() -> void:
 	var w := SimWorld.new(21)
@@ -905,25 +950,30 @@ func test_items_persist() -> void:
 	w.begin()
 	var p := w.player()
 	var it := w.drop_item(p.pos, &"rare", &"weapon")
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, true))
+	w.equip(it.id)
+	var bagged := w.drop_item(p.pos, &"common", &"module")
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, true))
 	var it_floor := w.drop_item(Vector2(0, -20))
-	w.step(DT, cmd())
-	check(w.equipped.get(&"weapon") == it and w.player_stats.has_source(it.id), "wearing a rare weapon")
+	check(w.equipped.get(&"weapon") == it and w.inventory.size() == 1 and w.inventory[0] == bagged and w.player_stats.has_source(it.id),
+		"wearing a rare weapon, a module in the bag")
 	w.damage(p.id, p.hp_max + 1.0)
 	w.restart_wave()
-	check(w.equipped.get(&"weapon") == it and w.player_stats.has_source(it.id) and p.alive, "R: the equipment stays on the player")
+	check(w.equipped.get(&"weapon") == it and w.player_stats.has_source(it.id) and w.inventory.size() == 1 and p.alive,
+		"R: equipment and bag stay")
 	check(not w.items.has(it_floor.id), "R: the floor is cleared")
 	w.start_wave(3)
-	check(w.equipped.get(&"weapon") == it, "N: the equipment stays too")
+	check(w.equipped.get(&"weapon") == it and w.inventory.size() == 1, "N: both stay too")
 	var base := SimStats.new(w.tuning).fire_interval()
 	w.reset_run()
-	check(w.equipped.is_empty() and not w.player_stats.has_source(it.id) and is_equal_approx(w.fire_interval(), base) and w.wave == 1,
-		"0: back to wave 1 without the equipment (%.4f s)" % w.fire_interval())
+	check(w.equipped.is_empty() and w.inventory.is_empty() and not w.player_stats.has_source(it.id) and is_equal_approx(w.fire_interval(), base) and w.wave == 1,
+		"0: back to wave 1, equipment and bag cleared (%.4f s)" % w.fire_interval())
 	check(w.player_stats.has_source("weapon") or w.weapon.name == "hunter", "0: the weapon profile is untouched")
 	w.set_weapon("brute")
 	w.reset_run()
 	check(w.weapon.name == "brute" and is_equal_approx(w.fire_interval(), base * 0.5 / 0.15), "0 keeps the weapon profile and its mods")
 	var d: Dictionary = w.to_dict()
-	check(d.has("equipped") and d.equipped is Dictionary and not d.has("picked_items"), "to_dict: equipment by slot")
+	check(d.has("equipped") and d.equipped is Dictionary and d.has("inventory") and d.inventory is Array, "to_dict: equipment by slot, inventory list")
 
 func _elites(w: SimWorld) -> Array:
 	return w.entities.values().filter(func(e): return e.kind == &"grunt" and e.elite)

@@ -2,8 +2,8 @@ class_name Hud
 extends CanvasLayer
 ## Minimal HUD for the tuning arena: wave line top-left (with the effective cadence), an elite
 ## line while one is alive, one line per equipment slot under it ("Arme · modifié · cadence
-## +15 % · dégâts +8 %" in the rarity colour, "Arme · —" dim when empty), and "Au sol : …" for
-## the nearest floor item within FLOOR_RANGE so the player decides before stepping on it.
+## +15 % · dégâts +8 %" in the rarity colour, "Arme · —" dim when empty), and "Au sol : … ·
+## [E] ramasser" for the nearest floor item within FLOOR_RANGE.
 ## "R pour recommencer" on death.
 ## Meta keys (physical, layout-independent): R restart the wave (when dead), N next wave,
 ## 0 back to wave 1, 1/2/3 weapon profile.
@@ -119,7 +119,7 @@ func _process(dt: float) -> void:
 	_floor_label.visible = near != null
 	if near != null:
 		_floor_label.position = Vector2(16, y)
-		_floor_label.text = "Au sol : " + item_line(near)
+		_floor_label.text = "Au sol : " + item_line(near) + " · [E] ramasser"
 		_floor_label.add_theme_color_override("font_color", ItemView.RARITY_COLORS.get(near.rarity, TEXT_COLOR))
 	_flash_t = maxf(0.0, _flash_t - dt)
 	var k := _flash_t / FLASH_TIME

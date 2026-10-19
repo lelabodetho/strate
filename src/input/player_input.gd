@@ -3,7 +3,8 @@ extends Node
 ## Turns Godot Input into a Command. Needs the camera to project the mouse onto the ground plane.
 
 @export var camera: Camera3D
-## Set by the scene while a UI panel is open: movement still works, attack and dash are ignored.
+## Set by the scene while a UI panel is open: movement still works, attack, dash and interact
+## are ignored.
 var combat_locked: bool = false
 
 func read() -> Command:
@@ -11,6 +12,7 @@ func read() -> Command:
 	c.move = Input.get_vector("move_left", "move_right", "move_up", "move_down")
 	c.attack = Input.is_action_pressed("attack") and not combat_locked
 	c.dash = Input.is_action_just_pressed("dash") and not combat_locked
+	c.interact = Input.is_action_just_pressed("interact") and not combat_locked
 	c.aim = _mouse_on_ground()
 	return c
 

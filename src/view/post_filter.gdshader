@@ -49,11 +49,13 @@ bool is_rare(vec3 c) {
 	return c.b > 0.25 && c.g > 1.4 * c.r && c.b > 1.45 * c.r;
 }
 
+// Orange: red well above blue. Steel under the warm player lamp (1.0, 0.84, 0.64) stays
+// below r = 1.8 b, so a lit grunt never reads orange; the player's own orange is above 2.5.
 bool is_accent(vec3 c) {
 	float mx = max(c.r, max(c.g, c.b));
 	float mn = min(c.r, min(c.g, c.b));
 	float sat = mx > 0.0 ? (mx - mn) / max(mx, 1e-6) : 0.0;
-	return sat > 0.35 && c.r > c.g && c.r > c.b * 1.5;
+	return sat > 0.35 && c.r > c.g && c.r > c.b * 2.0;
 }
 
 vec3 nearest_steel(vec3 c) {

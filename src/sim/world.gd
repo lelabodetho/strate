@@ -50,6 +50,7 @@ var wave_packs: Array[Vector2] = []   # pack centers of the current wave
 var wave_fallbacks: int = 0           # pack centers placed by the fallback this wave (constraints unmet)
 var items: Dictionary = {}            # id -> SimItem, lying on the floor
 var equipped: Dictionary = {}         # slot (StringName) -> SimItem worn by the player
+var inventory: Array[SimItem] = []    # the bag, in pickup order, capped by tuning.inventory_size
 
 # What happened during the last step(), for the view and the harness. Cleared every step.
 # {type:"hit", target, pos, dir, damage} {type:"kill", target, pos} {type:"dodge", pos}
@@ -57,12 +58,18 @@ var equipped: Dictionary = {}         # slot (StringName) -> SimItem worn by the
 # {type:"swing", pos, dir} {type:"explosion", pos, radius} {type:"stagger", target}
 # {type:"aggro", id} {type:"deaggro", id}
 # {type:"drop", id, slot, rarity, pos}  an item landed on the floor
-# {type:"equip", id, slot, replaced_id, pos}  the player walked over it; replaced_id (-1 if the
-#                                      slot was empty) now lies where the player stood
+# {type:"pickup", id, slot, rarity}     interact took the nearest floor item into the bag
+# {type:"inventory_full"}               interact on a full bag: the item stays on the floor
+# {type:"equip", id, slot, replaced_id} equip() from the bag; replaced_id (-1 if the slot was
+#                                      empty) went back to the bag, or to the floor if full
 # {type:"blocked", target, pos, dir}   shielded elite took a frontal hit
 # {type:"fuse", id, pos, radius, time} volatile elite died, blast in `time`
 # {type:"blast", pos, radius}          the corpse blew up
+# Events emitted between two steps (UI calls: equip, drop; harness: place_item, spawn_elite)
+# survive the next step's clear, so the view, which reads once per tick, still sees them.
 var events: Array[Dictionary] = []
+var _in_step := false
+var _outside_events := 0   # events emitted since the last step ended
 
 # Dash state (player only for now)
 var dash_t: float = 0.0
@@ -243,11 +250,12 @@ func restart_wave() -> void:
 	fire_cd = 0.0
 	start_wave(maxi(1, wave))
 
-## Back to wave 1 with a fresh player: the equipment is dropped too. Only R keeps it.
+## Back to wave 1 with a fresh player: equipment and bag are dropped too. Only R keeps them.
 func reset_run() -> void:
 	for it in equipped.values():
 		player_stats.remove_source(it.id)
 	equipped.clear()
+	inventory.clear()
 	wave = 1
 	restart_wave()
 
@@ -307,13 +315,22 @@ func fire_interval() -> float:
 func step(dt: float, cmd: Command) -> void:
 	tick += 1
 	time += dt
-	events.clear()
+	if _outside_events > 0:
+		events = events.slice(events.size() - _outside_events)
+	else:
+		events.clear()
+	_outside_events = 0
+	_in_step = true
+	_step_inner(dt, cmd)
+	_in_step = false
+
+func _step_inner(dt: float, cmd: Command) -> void:
 	var p := player()
 	if p == null:
 		return
 	if p.alive:
 		_step_player(dt, p, cmd)
-		_pick_up(p)
+		_pick_up(p, cmd.interact)
 	for e in entities.values():
 		if e.kind == &"grunt" and e.alive:
 			_step_grunt(dt, e, p)
@@ -688,38 +705,77 @@ func place_item(it: SimItem, pos: Vector2) -> SimItem:
 	_emit({"type": "drop", "id": it.id, "slot": it.slot, "rarity": it.rarity, "pos": it.pos})
 	return it
 
-## Walking over an item equips it: the slot's previous item loses its modifiers and lies where
-## the player stood, with its own id and affixes, unarmed until the player steps off it (else
-## the two would swap back and forth every tick). The new item's mods join the player under
-## source = item id. One swap per tick.
-func _pick_up(p: SimEntity) -> void:
+## Interact takes the nearest armed floor item within player_radius + PICKUP_REACH into the bag
+## (inventory_full if the bag is at tuning.inventory_size: the item stays). An item dropped at
+## the player's feet is unarmed until the player has stepped out of reach, so it is not taken
+## back by the same key press that follows. No rng here: the bag never changes the seed's path.
+func _pick_up(p: SimEntity, interact: bool) -> void:
 	var reach := p.radius + PICKUP_REACH
-	for id in items.keys():
-		var it: SimItem = items[id]
-		var within := it.pos.distance_squared_to(p.pos) <= reach * reach
+	var best: SimItem = null
+	var best_d := reach * reach
+	for it in items.values():
+		var d2: float = it.pos.distance_squared_to(p.pos)
 		if not it.armed:
-			if not within:
+			if d2 > reach * reach:
 				it.armed = true
 			continue
-		if not within:
-			continue
-		items.erase(id)
-		var old: SimItem = equipped.get(it.slot)
-		var replaced_id := -1
-		if old != null:
-			player_stats.remove_source(old.id)
-			old.pos = p.pos
-			old.armed = false
-			items[old.id] = old
-			replaced_id = old.id
-		equipped[it.slot] = it
-		player_stats.add_all(it.id, it.mods)
-		_refresh_body()
-		_emit({"type": "equip", "id": it.id, "slot": it.slot, "replaced_id": replaced_id, "pos": it.pos})
+		if d2 <= best_d:
+			best = it
+			best_d = d2
+	if not interact or best == null:
 		return
+	if inventory.size() >= int(tuning.inventory_size):
+		_emit({"type": "inventory_full"})
+		return
+	items.erase(best.id)
+	inventory.append(best)
+	_emit({"type": "pickup", "id": best.id, "slot": best.slot, "rarity": best.rarity})
+
+## Wear an item from the bag. The slot's previous item goes back to the bag, or to the floor
+## at the player's feet if the bag is full. Called by the UI through GameState, never by input.
+func equip(item_id: int) -> bool:
+	var it := _bag_item(item_id)
+	var p := player()
+	if it == null or p == null:
+		return false
+	inventory.erase(it)
+	var old: SimItem = equipped.get(it.slot)
+	var replaced_id := -1
+	if old != null:
+		player_stats.remove_source(old.id)
+		replaced_id = old.id
+		if inventory.size() < int(tuning.inventory_size):
+			inventory.append(old)
+		else:
+			old.armed = false
+			place_item(old, p.pos)
+	equipped[it.slot] = it
+	player_stats.add_all(it.id, it.mods)
+	_refresh_body()
+	_emit({"type": "equip", "id": it.id, "slot": it.slot, "replaced_id": replaced_id})
+	return true
+
+## Bag -> floor at the player's feet, unarmed until the player steps away.
+func drop(item_id: int) -> bool:
+	var it := _bag_item(item_id)
+	var p := player()
+	if it == null or p == null:
+		return false
+	inventory.erase(it)
+	it.armed = false
+	place_item(it, p.pos)
+	return true
+
+func _bag_item(item_id: int) -> SimItem:
+	for it in inventory:
+		if it.id == item_id:
+			return it
+	return null
 
 func _emit(ev: Dictionary) -> void:
 	events.append(ev)
+	if not _in_step:
+		_outside_events += 1
 
 func is_dashing() -> bool:
 	return dash_t > 0.0
@@ -740,6 +796,9 @@ func to_dict() -> Dictionary:
 	var worn := {}
 	for slot in equipped:
 		worn[String(slot)] = equipped[slot].to_dict()
+	var bag := []
+	for it in inventory:
+		bag.append(it.to_dict())
 	var evs := []
 	for ev in events:
 		var d := {}
@@ -757,6 +816,7 @@ func to_dict() -> Dictionary:
 		"player_stats": player_stats.to_dict(),
 		"items": floor_items,
 		"equipped": worn,
+		"inventory": bag,
 		"stats": stats,
 		"tuning": tuning.to_dict(),
 		"level": level.to_dict(),

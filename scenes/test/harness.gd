@@ -10,8 +10,11 @@ const CAM_SMOOTH := 8.0
 @onready var level_view: LevelView = $LevelView
 @onready var input: PlayerInput = $PlayerInput
 @onready var tuning_panel: TuningPanel = $TuningPanel
+var inventory_panel: InventoryPanel
 
 func _ready() -> void:
+	inventory_panel = InventoryPanel.new()
+	add_child(inventory_panel)
 	input.camera = cam
 	var w: SimWorld = GameState.world
 	level_view.build(w.level)
@@ -30,6 +33,7 @@ func _process(dt: float) -> void:
 
 func _physics_process(dt: float) -> void:
 	GameState.paused = tuning_panel.is_open()
-	input.combat_locked = GameState.paused
+	# The bag does not pause the world, but attack / dash / E are off while it is open.
+	input.combat_locked = GameState.paused or inventory_panel.is_open()
 	GameState.step(dt, input.read())
 	world_view.sync(GameState.world)
