@@ -23,7 +23,7 @@ ambient_light_energy = 0.45
 
 [sub_resource type="ShaderMaterial" id="world_filter"]
 shader = ExtResource("7")
-shader_parameter/mode = 0
+shader_parameter/mode = 2
 shader_parameter/dither_strength = 0.5
 shader_parameter/key_transparent = false
 
@@ -45,13 +45,13 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 stretch = true
-stretch_shrink = 3
+stretch_shrink = 2
 
 [node name="WorldVP" type="SubViewport" parent="WorldContainer"]
 handle_input_locally = false
 msaa_3d = 0
 screen_space_aa = 0
-size = Vector2i(426, 240)
+size = Vector2i(640, 360)
 render_target_update_mode = 4
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="WorldContainer/WorldVP"]
@@ -110,7 +110,7 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 stretch = true
-stretch_shrink = 3
+stretch_shrink = 2
 
 [node name="EntityVP" type="SubViewport" parent="EntityContainer"]
 own_world_3d = true
@@ -118,7 +118,7 @@ transparent_bg = true
 handle_input_locally = false
 msaa_3d = 0
 screen_space_aa = 0
-size = Vector2i(426, 240)
+size = Vector2i(640, 360)
 render_target_update_mode = 4
 
 [node name="Sun" type="DirectionalLight3D" parent="EntityContainer/EntityVP"]

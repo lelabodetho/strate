@@ -1,6 +1,7 @@
 extends Node
 ## Render test scene: the tuning arena, same sim and input, rendered through two low-resolution
-## SubViewports (1/3, nearest upscale) with the post filter of src/view/post_filter.gdshader.
+## SubViewports (1/2, nearest upscale: at 1/3 the cubes lose their edges) with the post filter
+## of src/view/post_filter.gdshader.
 ##   WorldVP   level geometry and lights, filter mode from GameState (F cycles)
 ##   EntityVP  its own World3D: entities, bullets, items, always mode pixel, over a copy of the
 ##             level drawn unshaded in the key colour (correct occlusion, keyed out by the

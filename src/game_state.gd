@@ -33,7 +33,7 @@ var preset_name: String = ""   # last preset applied or saved; "" = none
 var preset_dirty: bool = false # a slider moved since the preset was applied
 # Render test settings (not sim tuning): the filter mode of the world layer and the dither
 # strength. The panel edits them, F cycles the mode, render_test.gd applies them.
-var render_mode: String = "pixel"
+var render_mode: String = "mix"
 var render_dither: float = 0.5
 var render_scene: bool = false   # set by render_test.gd so the HUD shows the mode
 var _args: Dictionary = {}

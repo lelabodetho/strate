@@ -36,7 +36,7 @@ Ce repo est un kit de greybox (sim pure + harnais + tuning + arène) dont Strate
 - `scenes/test/harness.tscn` : scène de test nommée.
 - `GameState` (autoload) expose `to_dict()` et répond aux flags CLI `--screenshot=<path>` et `--state=<path>` puis quitte.
 - `tools/snap.sh` : lance la scène, capture, dump l'état. À utiliser après chaque changement visuel ou de gameplay.
-- `scenes/test/render_test.tscn` : même arène et même sim, rendue en 1/3 de résolution à travers `src/view/post_filter.gdshader` (F : pixel / dither / mix, entités toujours en pixel). `tools/snap.sh --mode=pixel|dither|mix` capture cette scène et dépose aussi `<nom>_world.png` et `<nom>_entities.png` (viewports bruts).
+- `scenes/test/render_test.tscn` : même arène et même sim, rendue en 1/2 de résolution à travers `src/view/post_filter.gdshader` (F : pixel / dither / mix, défaut mix, entités toujours en pixel, windup sur un ton danger rouge). `tools/snap.sh --mode=pixel|dither|mix` capture cette scène et dépose aussi `<nom>_world.png` et `<nom>_entities.png` (viewports bruts).
 - Ne jamais déclarer une feature terminée sans avoir lancé `tools/snap.sh` et regardé l'image.
 - `tools/sim_test.gd` : tests headless de la sim (`godot --headless --path . -s tools/sim_test.gd`). À lancer après tout changement dans `src/sim/`.
 - Les valeurs de référence du gameplay sont dans `tools/out/tuning.json`, pas dans le code. `SimTuning` porte les défauts, le panneau in-game (Tab) les édite et les sauve, `GameState` charge le fichier au démarrage.
