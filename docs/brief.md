@@ -1,5 +1,17 @@
 # STRATE — Brief de projet
 
+## Où on en est (19/10/2026)
+
+**État** : jalons 0, 1, 2, 2b bouclés. Arène de vagues jouable avec hunter / brute / technomancer, tuning par presets, premier item qui se sent. 142 tests headless.
+
+**Prochaine session : jalon 2c, le rendu.** Scène de test avec lampe, trois filtres en shader (pixel / dither / mix), gameplay toujours en pixel, monde en dither. Refs dans `docs/da/`.
+
+**Ensuite** : jalon 4 (élites avec affixes, paliers, boss, système de loot avec rareté / slots / rendements décroissants, éditeur de zone).
+
+**Comment on travaille** : une conversation par session. Ce brief est la source des décisions ; `CLAUDE.md` et `docs/` sont la source pour l'agent. Fin de session = brief à jour.
+
+---
+
 Septembre 2026. Synthèse des pratiques observées chez Thomas Ricouard (Void Explorer, Evergrow), Adam Whitcroft (Tithe), Tom Johnson (Pilgrimage) et Sprite Fusion, et plan de démarrage adapté à un projet perso sans deadline.
 
 ---
@@ -257,9 +269,19 @@ Critère de sortie : l'agent peut lancer le jeu, prendre une capture, lire l'ét
 - **Starter ARPG, pas roguelike (tranché le 18/10 au soir).** Le preset A avec cadence 0,12 et déplacement libre réglait un twin-stick (Isaac, Gungeon) : la puissance dans le joueur. Strate est un ARPG : la puissance est dans le build. Le starter est **faible mais satisfaisant** — cadence lente, coup lourd, projectile visible, déplacement ralenti pendant l'attaque (`attack_move_mult`), mono-cible. Tout ce qui rend nerveux (cadence, perforation, AoE large, vitesse) s'acquiert par items et compétences. Preset `E_starter_arpg` à valider ; dès validé, le **premier item de croissance** (+30 % cadence ou +1 perforation) passe en tête du jalon 4, avant les élites : c'est le vrai test du feel.
 - Règle de design : les multiplicateurs de profil s'appliquent aux stats de corps et de dégâts, jamais aux identités d'arme (cadence, vitesse de projectile).
 
-### Jalon 2b — Rendu
+### Jalon 2b — Premier item (bouclé le 19/10/2026)
 
-- [ ] `scenes/test/render_test.tscn` : l'arène actuelle, trois filtres commutables (pixel dense, dither bichrome gris + accent, mélange). Ferme la case rendu du moodboard. Prérequis : captures de Signalis et Tithe que Tho aime.
+- [x] `SimStats` : modificateurs `{source, stat, mult, pct, flat}`, formule `tuning × Π mult × (1 + Σ pct) + Σ flat`. Profils d'arme en `mult`, items en `pct`. Le monde ne lit plus le tuning du joueur que via `player_stats.value()`.
+- [x] `SimItem` « servo-gâchette » +30 % cadence, 20 % de drop (tuning `item_drop_chance`), ramassage au contact, HUD empilé, octaèdre orange avec halo et lumière au sol. R garde les items, 0 les retire.
+- [x] **Verdict en jeu : le pickup se sent.** Fondation ARPG validée.
+
+Retenir pour le système de loot (jalon 4) : l'empilement linéaire (+30 % × n) ramène au twin-stick en quelques vagues → slots + rendements décroissants + affixes à +5/+8/+12 %. Additif entre affixes de même type, multiplicatif entre catégories.
+
+### Jalon 2c — Rendu
+
+**DA tranchée (19/10) : low-poly flat-shaded comme source** (voir `docs/da/`), post-process par-dessus pour lumière, ombres et grain. Le personnage technomancien variante A fonctionne en silhouette dans les trois styles testés.
+
+- [ ] `scenes/test/render_test.tscn` : l'arène avec une lampe, trois filtres commutables en shader (pixel dense, dither bichrome gris + accent, mélange). Direction pressentie : **pixel dense pour le gameplay (persos, ennemis, projectiles, loot), dither pour le monde (murs, sol, fonds, écrans)**. Vérifier que le windup rouge et l'item au sol restent lisibles. Palettes de référence dans `tools/filters_preview.py`.
 - [ ] Faces internes visibles sur les murs translucides : résolu par le post-process ou un mesh unique.
 - [ ] Déploiement web (push GitHub + Pages).
 

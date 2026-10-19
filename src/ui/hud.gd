@@ -67,6 +67,8 @@ func _process(dt: float) -> void:
 	var preset := GameState.preset_label()
 	if not preset.is_empty():
 		line += " · " + preset
+	if GameState.render_scene:
+		line += " · rendu %s [F]" % GameState.render_mode
 	_wave_label.text = line
 	var lines := PackedStringArray()
 	for it in w.picked_items:

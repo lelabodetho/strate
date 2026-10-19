@@ -1,0 +1,105 @@
+shader_type canvas_item;
+// Post-process on a low-resolution SubViewportContainer (nearest upscale). Ports the three
+// looks of tools/filters_preview.py: palette is 8 steel greys + 4 accent oranges.
+//   mode 0 pixel   : nearest palette colour, accents (warm, saturated) on the accent ramp
+//   mode 1 dither  : three greys (dark / mid / light) through a Bayer 8x8 threshold, accent
+//                    dithered against dark so the volume stays
+//   mode 2 mix     : palette, Bayer jitter on the mid tones only, light scanlines
+// The entity layer uses mode 0 with key_transparent: pixels in the key colour (level geometry
+// drawn as occluder) and empty pixels become transparent so the world shows through.
+
+uniform int mode : hint_range(0, 2) = 0;
+uniform float dither_strength : hint_range(0.0, 1.0) = 0.5;
+uniform bool key_transparent = false;
+uniform vec3 key_color : source_color = vec3(1.0, 0.0, 1.0);
+
+const vec3 STEEL[8] = {
+	vec3(8.0, 8.0, 10.0) / 255.0, vec3(22.0, 22.0, 26.0) / 255.0, vec3(40.0, 40.0, 46.0) / 255.0,
+	vec3(62.0, 60.0, 66.0) / 255.0, vec3(88.0, 84.0, 88.0) / 255.0, vec3(118.0, 112.0, 112.0) / 255.0,
+	vec3(150.0, 142.0, 136.0) / 255.0, vec3(190.0, 182.0, 172.0) / 255.0
+};
+const vec3 ACC[4] = {
+	vec3(90.0, 36.0, 10.0) / 255.0, vec3(170.0, 70.0, 20.0) / 255.0,
+	vec3(255.0, 120.0, 40.0) / 255.0, vec3(255.0, 200.0, 120.0) / 255.0
+};
+const vec3 TONE_DARK = vec3(10.0, 10.0, 12.0) / 255.0;
+const vec3 TONE_MID = vec3(74.0, 70.0, 72.0) / 255.0;
+const vec3 TONE_LIGHT = vec3(150.0, 142.0, 136.0) / 255.0;
+const vec3 ACCENT = vec3(255.0, 120.0, 40.0) / 255.0;
+
+float lum(vec3 c) {
+	return dot(c, vec3(0.299, 0.587, 0.114));
+}
+
+bool is_accent(vec3 c) {
+	float mx = max(c.r, max(c.g, c.b));
+	float mn = min(c.r, min(c.g, c.b));
+	float sat = mx > 0.0 ? (mx - mn) / max(mx, 1e-6) : 0.0;
+	return sat > 0.35 && c.r > c.g && c.r > c.b * 1.5;
+}
+
+vec3 nearest_steel(vec3 c) {
+	vec3 best = STEEL[0];
+	float bd = 1e9;
+	for (int i = 0; i < 8; i++) {
+		vec3 d = c - STEEL[i];
+		float dd = dot(d, d);
+		if (dd < bd) { bd = dd; best = STEEL[i]; }
+	}
+	return best;
+}
+
+vec3 nearest_acc(vec3 c) {
+	vec3 best = ACC[0];
+	float bd = 1e9;
+	for (int i = 0; i < 4; i++) {
+		vec3 d = c - ACC[i];
+		float dd = dot(d, d);
+		if (dd < bd) { bd = dd; best = ACC[i]; }
+	}
+	return best;
+}
+
+// Bayer 8x8 threshold in 0..63/64, same matrix as the Python preview.
+float bayer8(ivec2 p) {
+	int x = p.x & 7;
+	int y = p.y & 7;
+	int xy = x ^ y;
+	int v = ((xy & 1) << 5) | ((y & 1) << 4) | ((xy & 2) << 2) | ((y & 2) << 1) | ((xy & 4) >> 1) | ((y & 4) >> 2);
+	return float(v) / 64.0;
+}
+
+void fragment() {
+	vec4 src = texture(TEXTURE, UV);
+	vec3 c = src.rgb;
+	vec3 dk = c - key_color;
+	bool empty = key_transparent && (src.a < 0.5 || dot(dk, dk) < 0.01);
+	// Big pixels: the low-res texel, so the dither pattern is drawn at the viewport's resolution.
+	ivec2 px = ivec2(floor(UV / TEXTURE_PIXEL_SIZE));
+	float b = bayer8(px);
+	float l = lum(c);
+	vec3 outc;
+	if (mode == 1) {
+		float t = 0.5 + (b - 0.5) * 2.0 * dither_strength;
+		if (is_accent(c)) {
+			float acc_lvl = clamp(l * 1.6, 0.0, 1.0);
+			outc = acc_lvl > t ? ACCENT : TONE_DARK + ACCENT * 0.35;
+		} else {
+			float lvl = l * 2.0;
+			float base = floor(lvl);
+			float up = (lvl - base) > t ? 1.0 : 0.0;
+			int idx = clamp(int(base + up), 0, 2);
+			outc = idx == 0 ? TONE_DARK : (idx == 1 ? TONE_MID : TONE_LIGHT);
+		}
+	} else if (mode == 2) {
+		float amp = 0.18 * dither_strength;
+		vec3 jit = (l > 0.06 && l < 0.75) ? c + (b - 0.5) * amp : c;
+		outc = is_accent(c) ? nearest_acc(c) : nearest_steel(clamp(jit, 0.0, 1.0));
+		if ((int(FRAGCOORD.y) % 3) == 0) {
+			outc *= 0.86;
+		}
+	} else {
+		outc = is_accent(c) ? nearest_acc(c) : nearest_steel(c);
+	}
+	COLOR = empty ? vec4(0.0) : vec4(outc, key_transparent ? src.a : 1.0);
+}

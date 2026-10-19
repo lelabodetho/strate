@@ -36,17 +36,19 @@ Ce repo est un kit de greybox (sim pure + harnais + tuning + arène) dont Strate
 - `scenes/test/harness.tscn` : scène de test nommée.
 - `GameState` (autoload) expose `to_dict()` et répond aux flags CLI `--screenshot=<path>` et `--state=<path>` puis quitte.
 - `tools/snap.sh` : lance la scène, capture, dump l'état. À utiliser après chaque changement visuel ou de gameplay.
+- `scenes/test/render_test.tscn` : même arène et même sim, rendue en 1/3 de résolution à travers `src/view/post_filter.gdshader` (F : pixel / dither / mix, entités toujours en pixel). `tools/snap.sh --mode=pixel|dither|mix` capture cette scène et dépose aussi `<nom>_world.png` et `<nom>_entities.png` (viewports bruts).
 - Ne jamais déclarer une feature terminée sans avoir lancé `tools/snap.sh` et regardé l'image.
 - `tools/sim_test.gd` : tests headless de la sim (`godot --headless --path . -s tools/sim_test.gd`). À lancer après tout changement dans `src/sim/`.
 - Les valeurs de référence du gameplay sont dans `tools/out/tuning.json`, pas dans le code. `SimTuning` porte les défauts, le panneau in-game (Tab) les édite et les sauve, `GameState` charge le fichier au démarrage.
 
 ## Assets
-3D low-poly + shader de post-process (dither / pixel). Le filtre final se décide sur `scenes/test/render_test.tscn`. Palette : gris acier, rouille, noir, un accent. Pas de textures au départ : couleurs plates.
+**DA tranchée : low-poly flat-shaded.** Volumes nets, couleurs plates, pas de textures, ~2000 tris par perso. Post-process par-dessus pour lumière, ombres, grain. Palette : gris acier froid (8 tons), rouille, noir, un accent orange (4 tons) — valeurs dans `tools/filters_preview.py`. Références visuelles : `docs/da/`. Direction du filtre : pixel dense sur le gameplay, dither sur le monde ; se tranche sur `scenes/test/render_test.tscn`.
 
 ## Jalons
 - J1 : squelette + harnais — bouclé
 - J2 : la mécanique — bouclé. Base = preset A densité (tools/presets/baseline.json), hunter = archétype de départ.
-- J2b : scène de test de rendu (3 filtres commutables), murs translucides propres, déploiement web
+- J2b : premier item — bouclé. SimStats + SimItem, le pickup se sent.
+- J2c : rendu. DA = low-poly flat-shaded (source) + post-process. Scène de test avec lampe, 3 filtres en shader, pixel dense pour le gameplay / dither pour le monde. Refs dans docs/da/.
 - J3 : viewer de personnage (8 directions, sliders, export PNG, JSON)
 - J4 : contenu (élites, affixes, paliers, boss, éditeur de zone)
 - J5 : coop 1–4

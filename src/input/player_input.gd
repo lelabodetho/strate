@@ -17,7 +17,8 @@ func read() -> Command:
 func _mouse_on_ground() -> Vector2:
 	if camera == null:
 		return Vector2.ZERO
-	var m := get_viewport().get_mouse_position()
+	# The camera's own viewport: a SubViewport maps the mouse through its container.
+	var m := camera.get_viewport().get_mouse_position()
 	var from := camera.project_ray_origin(m)
 	var dir := camera.project_ray_normal(m)
 	var plane := Plane(Vector3.UP, 0.0)

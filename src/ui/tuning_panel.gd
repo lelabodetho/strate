@@ -15,6 +15,9 @@ var _presets: OptionButton
 var _preset_label: Label
 var _save_as_name: LineEdit
 var _weapons: OptionButton
+var _modes: OptionButton
+var _dither: HSlider
+var _dither_value: Label
 
 func _ready() -> void:
 	layer = 10
@@ -85,6 +88,38 @@ func _ready() -> void:
 		_weapons.add_item("%d · %s" % [i + 1, WeaponProfile.NAMES[i]], i)
 	_weapons.item_selected.connect(func(i: int): GameState.set_weapon(WeaponProfile.NAMES[i]))
 	weapon_row.add_child(_weapons)
+
+	# Render filter (render_test scene only; F cycles the mode). Not part of the sim tuning.
+	var render_row := HBoxContainer.new()
+	vbox.add_child(render_row)
+	var render_title := Label.new()
+	render_title.text = "rendu"
+	render_title.custom_minimum_size.x = 60
+	render_row.add_child(render_title)
+	_modes = OptionButton.new()
+	_modes.custom_minimum_size.x = 100
+	_modes.focus_mode = Control.FOCUS_NONE
+	for i in GameState.RENDER_MODES.size():
+		_modes.add_item(GameState.RENDER_MODES[i], i)
+	_modes.item_selected.connect(func(i: int): GameState.set_render_mode(GameState.RENDER_MODES[i]))
+	render_row.add_child(_modes)
+	var dither_title := Label.new()
+	dither_title.text = " dither"
+	render_row.add_child(dither_title)
+	_dither = HSlider.new()
+	_dither.min_value = 0.0
+	_dither.max_value = 1.0
+	_dither.step = 0.05
+	_dither.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_dither.focus_mode = Control.FOCUS_NONE
+	_dither.value_changed.connect(func(v: float):
+		GameState.set_render_dither(v)
+		_dither_value.text = _fmt(v))
+	render_row.add_child(_dither)
+	_dither_value = Label.new()
+	_dither_value.custom_minimum_size.x = 40
+	_dither_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	render_row.add_child(_dither_value)
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -159,6 +194,9 @@ func refresh() -> void:
 		if names[i] == GameState.preset_name:
 			_presets.select(i + 1)
 	_weapons.select(WeaponProfile.NAMES.find(GameState.world.weapon.name))
+	_modes.select(GameState.RENDER_MODES.find(GameState.render_mode))
+	_dither.set_value_no_signal(GameState.render_dither)
+	_dither_value.text = _fmt(GameState.render_dither)
 	_refresh_preset_label()
 
 func _refresh_preset_label() -> void:
