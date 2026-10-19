@@ -40,7 +40,7 @@ Ce repo est un kit de greybox (sim pure + harnais + tuning + arène) dont Strate
 - Ne jamais déclarer une feature terminée sans avoir lancé `tools/snap.sh` et regardé l'image.
 - Événements de sim (`SimWorld.events`, vidé à chaque tick, consommés une fois par tick par le view) : hit, kill, dodge, shot, impact, wave_cleared, swing, explosion, stagger, aggro, deaggro, drop (item au sol : `slot`, `rarity`), pickup (E : l'item entre dans le sac), inventory_full (sac plein, l'item reste), equip (`SimWorld.equip()` depuis le sac ; `replaced_id` = l'ancien item du slot, retourné au sac ou posé aux pieds si plein), blocked (coup frontal sur un blindé), fuse (élite instable mort, explosion dans `time`), blast.
 - `tools/sim_test.gd` : tests headless de la sim (`godot --headless --path . -s tools/sim_test.gd`). À lancer après tout changement dans `src/sim/`.
-- Les valeurs de référence du gameplay sont dans `tools/presets/default.json`, pas dans le code : `GameState` le charge au démarrage, le panneau in-game (Tab) l'édite et « Save » l'écrit. Les défauts de `SimTuning` sont la fixture de `tools/sim_test.gd` et ne bougent pas. `tools/out/` (captures) porte un `.gdignore` pour que l'éditeur ne réimporte pas les PNG.
+- Les valeurs de référence du gameplay sont dans `tools/presets/default.json`, pas dans le code : `GameState` le charge au démarrage, le panneau in-game (Tab) l'édite et « Save » l'écrit. Les défauts de `SimTuning` sont la fixture de `tools/sim_test.gd` et ne bougent pas. `tools/out/` (captures, non suivi) reçoit un `.gdignore` de `tools/snap.sh` et `docs/` en porte un, pour que l'éditeur n'importe ni les captures ni les images de référence.
 
 ## Assets
 **DA tranchée : low-poly flat-shaded.** Volumes nets, couleurs plates, pas de textures, ~2000 tris par perso. Post-process par-dessus pour lumière, ombres, grain. Palette : gris acier froid (8 tons), rouille, noir, un accent orange (4 tons) — valeurs dans `tools/filters_preview.py`. Références visuelles : `docs/da/`. Rendu : `scenes/test/render_test.tscn`, shader `src/view/post_filter.gdshader`, mode `mix` par défaut, entités en `pixel`. **Langage visuel** : orange = joueur et ce qui est à lui ; rouge DANGER = menace (windups, zones de boss) ; gris acier = monde. Ne jamais utiliser l'orange pour un ennemi.
@@ -54,6 +54,12 @@ Ce repo est un kit de greybox (sim pure + harnais + tuning + arène) dont Strate
 - J4 : contenu — en cours. Brique 1 bouclée : élites avec affixes (blindé / instable / célère, `SimWorld.AFFIXES`), une par vague dès `elite_from_wave`, chaque affixe a un contre que le hunter de départ possède déjà. Brique 2 bouclée : loot généré (`SimItem.roll` : slot arme / armure / module, rareté série / modifié / relique = 1 / 2 / 3 affixes, paliers T1–T3 à `affix_t1..t3`), sac minimal (`SimWorld.inventory`, cap `inventory_size`, E ramasse, `equip()` / `drop()` appelés par `src/ui/inventory_panel.gd` via GameState), tables de drop dans le tuning. Les événements émis hors `step()` (UI, harnais) survivent au tick suivant pour que le view les voie. Reste : paliers, boss, éditeur de zone.
 - J5 : coop 1–4
 - J6+ : classes 2–3, biomes, saisons
+
+## Rythme de session
+- Une session Claude Code = une session de travail. Au démarrage : lire CLAUDE.md et docs/brief.md, `git status` propre, `git pull`.
+- Une brique = un commit. Jamais de feature non commitée en fin de session.
+- Fin de session : suite headless verte, docs/brief.md et CLAUDE.md à jour, `git push`.
+- Si le contexte semble saturé (répétitions, règles oubliées) : commit ce qui est bon et proposer d'arrêter la session.
 
 ## Interdits
 - Rien de 40K : pas d'aquila, space marines, Emperor, Mechanicus, warp. Ton oui, marques non.

@@ -2,13 +2,16 @@
 .godot/
 /android/
 *.import.tmp
+# Reference images under docs/ are not game assets: docs/.gdignore keeps the editor out,
+# so no .import is generated there (and none is tracked)
+docs/**/*.import
 
 # Exports
 /export/
 
-# Harness output (captures); the .gdignore keeps the editor from importing them
-/tools/out/*
-!/tools/out/.gdignore
+# Harness output (captures); tools/snap.sh recreates the .gdignore that keeps the editor
+# from importing them
+/tools/out/
 
 # OS
 .DS_Store

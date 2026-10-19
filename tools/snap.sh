@@ -13,7 +13,7 @@ if [ -z "$GODOT" ]; then
   done
 fi
 [ -x "${GODOT:-}" ] || { echo "Godot not found; set GODOT=/path/to/Godot" >&2; exit 1; }
-mkdir -p tools/out
+mkdir -p tools/out && touch tools/out/.gdignore   # untracked: keeps the editor from importing the captures
 SCENE=res://scenes/test/harness.tscn
 for a in "$@"; do case "$a" in --mode=*|--render) SCENE=res://scenes/test/render_test.tscn;; esac; done
 "$GODOT" --path . --scene "$SCENE" --resolution 1280x720 \
