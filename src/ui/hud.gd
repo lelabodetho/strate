@@ -79,7 +79,12 @@ func _process(dt: float) -> void:
 	var w: SimWorld = GameState.world
 	var p: SimEntity = w.player()
 	var hp := int(round(p.hp)) if p != null else 0
-	var line := "Vague %d · %d grunts · %d PV · %s · cadence %.2f s" % [w.wave, w.grunts_alive(), hp, w.weapon.name, w.fire_interval()]
+	var line: String
+	if w.level.kind == "arena":
+		line = "Vague %d · %d grunts" % [w.wave, w.grunts_alive()]
+	else:
+		line = "%s · %d grunts" % [w.level.name, w.grunts_alive()]
+	line += " · %d PV · %s · cadence %.2f s" % [hp, w.weapon.name, w.fire_interval()]
 	var preset := GameState.preset_label()
 	if not preset.is_empty():
 		line += " · " + preset

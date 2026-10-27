@@ -2,13 +2,166 @@ class_name SimLevel
 extends RefCounted
 ## Static geometry on the XZ plane (Vector2 = x, z). Pure data, no Node.
 ## Walkable area = union of floors minus walls. Walls are axis-aligned rects.
+## A level comes from code (arena(), the tuning arena) or from data/levels/<name>.json through
+## from_dict(): floors, walls (auto_walls() around the floors when absent), player_spawn,
+## hand-placed packs, an exit rect (strate -> hub), a descend rect (hub -> strate). The loader
+## validates (kind, spawn, pack centers and exit on a floor) and returns null, with an error,
+## on anything else.
 
 const WALL_HEIGHT := 2.5
+const WALL_THICKNESS := 1.0
+const KINDS := ["arena", "hub", "strate"]
+const DIR := "res://data/levels"
 
+var name: String = "arena"
+var kind: String = "arena"
 var bounds: Rect2                 # union of floors
 var floors: Array[Rect2] = []     # walkable rects
 var walls: Array[Rect2] = []
 var player_spawn: Vector2 = Vector2.ZERO
+# Hand-placed packs: [{pos: Vector2, size: int, elite: bool, affixes: Array[StringName]}].
+# Empty = the wave arena (SimWorld.start_wave) runs instead.
+var packs: Array[Dictionary] = []
+var exit: Rect2 = Rect2()         # zero size = no exit
+var descend: Rect2 = Rect2()      # zero size = no descend pad
+
+static func path(level_name: String) -> String:
+	return DIR.path_join(level_name + ".json")
+
+## null (and an error) when the file is missing, not JSON, or fails validation.
+static func load_file(p: String) -> SimLevel:
+	if not FileAccess.file_exists(p):
+		push_error("SimLevel: no such level file: " + p)
+		return null
+	var parsed = JSON.parse_string(FileAccess.get_file_as_string(p))
+	if not parsed is Dictionary:
+		push_error("SimLevel: not a JSON object: " + p)
+		return null
+	return from_dict(parsed)
+
+## Build and validate a level from its dictionary (the JSON shape, see data/levels/*.json).
+static func from_dict(d: Dictionary) -> SimLevel:
+	var l := SimLevel.new()
+	l.name = String(d.get("name", "level"))
+	l.kind = String(d.get("kind", "strate"))
+	if not KINDS.has(l.kind):
+		return _reject(l, "kind must be one of %s, got '%s'" % [KINDS, l.kind])
+	for f in d.get("floors", []):
+		var r: Variant = _rect(f)
+		if r == null or not (r as Rect2).has_area():
+			return _reject(l, "every floor must be [x, z, w, h] with w, h > 0")
+		l.floors.append(r)
+	if l.floors.is_empty():
+		return _reject(l, "a level needs at least one floor")
+	l.bounds = l.floors[0]
+	for f in l.floors:
+		l.bounds = l.bounds.merge(f)
+	if d.has("walls"):
+		for w in d.walls:
+			var r: Variant = _rect(w)
+			if r == null:
+				return _reject(l, "every wall must be [x, z, w, h]")
+			l.walls.append(r)
+	else:
+		l.walls = auto_walls(l.floors)
+	var sp = d.get("player_spawn")
+	if not (sp is Array and sp.size() == 2):
+		return _reject(l, "player_spawn must be [x, z]")
+	l.player_spawn = Vector2(float(sp[0]), float(sp[1]))
+	if not l.on_floor(l.player_spawn):
+		return _reject(l, "player_spawn %s is off the floor" % l.player_spawn)
+	for entry in d.get("packs", []):
+		if not (entry is Dictionary and entry.get("pos") is Array and entry.pos.size() == 2):
+			return _reject(l, "every pack needs pos: [x, z]")
+		var pack := {
+			"pos": Vector2(float(entry.pos[0]), float(entry.pos[1])),
+			"size": maxi(1, int(entry.get("size", 3))),
+			"elite": bool(entry.get("elite", false)),
+			"affixes": [] as Array[StringName],
+		}
+		for a in entry.get("affixes", []):
+			pack.affixes.append(StringName(String(a)))   # names checked by SimWorld.make_elite
+		if not l.on_floor(pack.pos):
+			return _reject(l, "pack center %s is off the floor" % pack.pos)
+		l.packs.append(pack)
+	for key in ["exit", "descend"]:
+		if d.get(key) == null:
+			continue
+		var r: Variant = _rect(d[key])
+		if r == null or not (r as Rect2).has_area():
+			return _reject(l, "%s must be [x, z, w, h] with w, h > 0" % key)
+		if not l.on_floor((r as Rect2).get_center()):
+			return _reject(l, "%s %s is off the floor" % [key, r])
+		l.set(key, r)
+	return l
+
+static func _reject(l: SimLevel, why: String) -> SimLevel:
+	push_error("SimLevel '%s': %s" % [l.name, why])
+	return null
+
+static func _rect(v) -> Variant:
+	if v is Array and v.size() == 4:
+		return Rect2(float(v[0]), float(v[1]), float(v[2]), float(v[3]))
+	return null
+
+## Walls of WALL_THICKNESS around every floor, open where two floors touch edge to edge. The
+## strips along x (north and south) run a thickness past both corners so the corners close.
+static func auto_walls(fl: Array[Rect2]) -> Array[Rect2]:
+	var out: Array[Rect2] = []
+	var t := WALL_THICKNESS
+	for f in fl:
+		# north (z-) and south (z+): openings are the x-overlap of a floor touching that edge
+		for side in [[f.position.y - t, f.position.y, true], [f.end.y, f.end.y, false]]:
+			var z: float = side[0]
+			var open: Array = []
+			for g in fl:
+				if g == f:
+					continue
+				var touches: bool = (is_equal_approx(g.end.y, f.position.y) if side[2] else is_equal_approx(g.position.y, f.end.y))
+				if touches:
+					var a := maxf(f.position.x, g.position.x)
+					var b := minf(f.end.x, g.end.x)
+					if b > a:
+						open.append([a, b])
+			for piece in _cut([f.position.x - t, f.end.x + t], open):
+				out.append(Rect2(piece[0], z, piece[1] - piece[0], t))
+		# west (x-) and east (x+)
+		for side in [[f.position.x - t, true], [f.end.x, false]]:
+			var x: float = side[0]
+			var open: Array = []
+			for g in fl:
+				if g == f:
+					continue
+				var touches: bool = (is_equal_approx(g.end.x, f.position.x) if side[1] else is_equal_approx(g.position.x, f.end.x))
+				if touches:
+					var a := maxf(f.position.y, g.position.y)
+					var b := minf(f.end.y, g.end.y)
+					if b > a:
+						open.append([a, b])
+			for piece in _cut([f.position.y, f.end.y], open):
+				out.append(Rect2(x, piece[0], t, piece[1] - piece[0]))
+	# A corner extension that lands inside a neighbouring floor (the jambs of a doorway) goes.
+	return out.filter(func(w: Rect2) -> bool:
+		for g in fl:
+			if g.encloses(w):
+				return false
+		return true)
+
+## The parts of [lo, hi] outside every [a, b] of `open`.
+static func _cut(span: Array, open: Array) -> Array:
+	var pieces := [span]
+	for o in open:
+		var next := []
+		for p in pieces:
+			if o[1] <= p[0] or o[0] >= p[1]:
+				next.append(p)
+				continue
+			if o[0] > p[0]:
+				next.append([p[0], o[0]])
+			if o[1] < p[1]:
+				next.append([o[1], p[1]])
+		pieces = next
+	return pieces.filter(func(p): return p[1] - p[0] > 0.001)
 
 ## A straight corridor centered on the origin, long axis along z. Player spawns near the z+ end.
 static func corridor(width: float, length: float, thickness: float = 1.0) -> SimLevel:
@@ -92,10 +245,22 @@ static func _rects(list: Array[Rect2]) -> Array:
 		out.append([r.position.x, r.position.y, r.size.x, r.size.y])
 	return out
 
+static func _rect_or_null(r: Rect2) -> Variant:
+	return [r.position.x, r.position.y, r.size.x, r.size.y] if r.has_area() else null
+
+## The JSON shape: from_dict(to_dict()) gives the same level.
 func to_dict() -> Dictionary:
+	var pk := []
+	for p in packs:
+		pk.append({"pos": [p.pos.x, p.pos.y], "size": p.size, "elite": p.elite,
+			"affixes": p.affixes.map(func(a: StringName): return String(a))})
 	return {
+		"name": name, "kind": kind,
 		"bounds": [bounds.position.x, bounds.position.y, bounds.size.x, bounds.size.y],
 		"player_spawn": [player_spawn.x, player_spawn.y],
 		"floors": _rects(floors),
 		"walls": _rects(walls),
+		"packs": pk,
+		"exit": _rect_or_null(exit),
+		"descend": _rect_or_null(descend),
 	}

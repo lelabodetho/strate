@@ -113,3 +113,26 @@ func to_dict() -> Dictionary:
 		"affixes": affixes.duplicate(true),
 		"mods": mods.duplicate(true),
 	}
+
+## The inverse of to_dict() for the character save: affixes keep their saved pct (the tuning
+## of the moment they rolled), mods are rebuilt from them. null when the slot or rarity is
+## unknown.
+static func from_dict(d: Dictionary) -> SimItem:
+	var p_slot := StringName(String(d.get("slot", "")))
+	var p_rarity := StringName(String(d.get("rarity", "")))
+	if not SLOTS.has(p_slot) or not RARITIES.has(p_rarity):
+		return null
+	var it := SimItem.new(p_slot, p_rarity)
+	it.id = int(d.get("id", 0))
+	it.name_key = String(d.get("name_key", ""))
+	var p = d.get("pos")
+	if p is Array and p.size() == 2:
+		it.pos = Vector2(float(p[0]), float(p[1]))
+	for a in d.get("affixes", []):
+		var stat := String(a.get("stat", ""))
+		if stat.is_empty():
+			continue
+		var pct := float(a.get("pct", 0.0))
+		it.affixes.append({"stat": stat, "tier": clampi(int(a.get("tier", 1)), 1, 3), "pct": pct})
+		it.mods.append({"stat": stat, "pct": pct})
+	return it

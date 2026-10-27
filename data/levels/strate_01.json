@@ -1,0 +1,9 @@
+{
+  "name": "strate_01",
+  "kind": "strate",
+  "floors": [[-6, -6, 12, 12], [-2, -14, 4, 8], [-8, -30, 16, 16]],
+  "player_spawn": [0, 4],
+  "packs": [{"pos": [0, -23], "size": 3, "elite": false, "affixes": []}],
+  "exit": [-1.5, -29.5, 3, 3],
+  "descend": null
+}

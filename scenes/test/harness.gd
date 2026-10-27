@@ -23,6 +23,15 @@ func _ready() -> void:
 	world_view.debug = GameState.debug
 	world_view.sync(w)
 	cam.position = _cam_target()
+	GameState.level_changed.connect(_on_level_changed)
+
+## A new world (hub <-> strate, death): rebuild the geometry, drop every entity view.
+func _on_level_changed() -> void:
+	var w: SimWorld = GameState.world
+	level_view.build(w.level)
+	world_view.reset()
+	world_view.sync(w)
+	cam.position = _cam_target()
 
 func _cam_target() -> Vector3:
 	var p: SimEntity = GameState.world.player()

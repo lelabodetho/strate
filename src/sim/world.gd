@@ -29,6 +29,16 @@ var tuning: SimTuning:
 		tuning = v
 		if player_stats != null:
 			player_stats.tuning = v
+# What the player keeps across levels: weapon profile name, worn items, bag, item ids. The
+# world is one level and reads and writes the equipment through it; `equipped` and `inventory`
+# below are views on the character, never storage of their own.
+var character: SimCharacter
+var equipped: Dictionary:
+	get:
+		return character.equipped
+var inventory: Array[SimItem]:
+	get:
+		return character.inventory
 var weapon: WeaponProfile = WeaponProfile.hunter()
 # The player's effective numbers: tuning × weapon mods × item mods. Every player value the
 # world needs goes through player_stats.value(); the tuning is never read directly for it.
@@ -51,9 +61,8 @@ var wave: int = 0
 var next_wave_t: float = 0.0   # > 0 while counting down to the next wave
 var wave_packs: Array[Vector2] = []   # pack centers of the current wave
 var wave_fallbacks: int = 0           # pack centers placed by the fallback this wave (constraints unmet)
-var items: Dictionary = {}            # id -> SimItem, lying on the floor
-var equipped: Dictionary = {}         # slot (StringName) -> SimItem worn by the player
-var inventory: Array[SimItem] = []    # the bag, in pickup order, capped by tuning.inventory_size
+var items: Dictionary = {}            # id -> SimItem, lying on the floor (ids from the character)
+var _zone_latched := false            # exit / descend already announced for this stay in the rect
 
 # What happened during the last step(), for the view and the harness. Cleared every step.
 # {type:"hit", target, pos, dir, damage} {type:"kill", target, pos} {type:"dodge", pos}
@@ -69,6 +78,8 @@ var inventory: Array[SimItem] = []    # the bag, in pickup order, capped by tuni
 # {type:"blocked", target, pos, dir}   shielded elite took a frontal hit
 # {type:"fuse", id, pos, radius, time} volatile elite died, blast in `time`
 # {type:"blast", pos, radius}          the corpse blew up
+# {type:"exit", level}                 player on the level's exit, no grunt within exit_lock_radius
+# {type:"descend", level}              player on the hub's descend pad (same lock); once per stay
 # Events emitted between two steps (UI calls: equip, drop; harness: place_item, spawn_elite)
 # survive the next step's clear, so the view, which reads once per tick, still sees them.
 var events: Array[Dictionary] = []
@@ -84,18 +95,58 @@ var iframes_t: float = 0.0
 # Counters for the harness and tuning
 var stats := {"wave": 0, "hits_taken": 0, "dodged": 0, "kills": 0, "shots": 0, "shots_hit": 0}
 
-func _init(p_seed: int = 0, p_level: SimLevel = null, p_tuning: SimTuning = null) -> void:
+func _init(p_seed: int = 0, p_level: SimLevel = null, p_tuning: SimTuning = null, p_character: SimCharacter = null) -> void:
 	seed = p_seed
 	rng.seed = p_seed
 	level = p_level if p_level != null else SimLevel.arena()
 	tuning = p_tuning if p_tuning != null else SimTuning.new()
+	character = p_character if p_character != null else SimCharacter.new()
+	weapon = WeaponProfile.by_name(character.weapon_name)
 	player_stats = SimStats.new(tuning)
-	player_stats.add_all("weapon", weapon.mods)
+	character.apply_to(player_stats)
 
-## Spawn the player at the level's spawn point and start wave 1.
+## Spawn the player at the level's spawn point, then the level's hand-placed packs; the wave
+## arena (kind "arena") starts wave 1 instead. A hub has neither packs nor waves.
 func begin() -> void:
 	spawn(&"player", level.player_spawn)
-	start_wave(1)
+	_populate()
+
+func _populate() -> void:
+	if level.kind == "arena":
+		start_wave(1)
+	else:
+		_spawn_level_packs()
+
+## The level's packs: each one within PACK_RADIUS of its center, pack index = its index in the
+## file; an elite pack has its first grunt made elite with the given affixes, or one rolled
+## from AFFIXES when the file gives none. No waves: wave stays 0, nothing follows a clear.
+func _spawn_level_packs() -> void:
+	wave = 0
+	stats.wave = 0
+	next_wave_t = 0.0
+	wave_packs.clear()
+	wave_fallbacks = 0
+	for id in entities.keys():
+		if entities[id].kind == &"grunt":
+			entities.erase(id)
+	var p := player()
+	var placed: Array[Vector2] = []
+	for pack_i in level.packs.size():
+		var pack: Dictionary = level.packs[pack_i]
+		wave_packs.append(pack.pos)
+		var leader: SimEntity = null
+		for j in int(pack.size):
+			var pos := _find_pack_slot(pack.pos, p, placed)
+			var g := spawn(&"grunt", pos)
+			g.pack = pack_i
+			placed.append(pos)
+			if leader == null:
+				leader = g
+		if pack.elite and leader != null:
+			var affixes: Array[StringName] = pack.affixes.duplicate()
+			if affixes.is_empty():
+				affixes.append(AFFIXES[rng.randi_range(0, AFFIXES.size() - 1)])
+			make_elite(leader, affixes)
 
 ## Wave n: clear remaining grunts, spawn min(wave_cap, 3 + 2*(n-1)) of them as 2–4 packs of
 ## 2–4, each pack within PACK_RADIUS of a seeded center on one of the level's floors, never
@@ -142,7 +193,7 @@ func start_wave(n: int) -> void:
 ## Turn a grunt into an elite: tougher, bigger, refilled, with its affixes.
 func make_elite(g: SimEntity, affixes: Array[StringName]) -> void:
 	g.elite = true
-	g.affixes = affixes.duplicate()
+	g.affixes = affixes.filter(func(a: StringName) -> bool: return AFFIXES.has(a))
 	g.hp_max = tuning.grunt_hp * tuning.elite_hp_mult
 	g.hp = g.hp_max
 	g.radius = tuning.grunt_radius * tuning.elite_body_mult
@@ -252,15 +303,18 @@ func restart_wave() -> void:
 	dash_cd = 0.0
 	iframes_t = 0.0
 	target_id = -1
+	_zone_latched = false
 	_cancel_attack()
-	start_wave(maxi(1, wave))
+	if level.kind == "arena":
+		start_wave(maxi(1, wave))
+	else:
+		_spawn_level_packs()
 
 ## Back to wave 1 with a fresh player: equipment and bag are dropped too. Only R keeps them.
 func reset_run() -> void:
 	for it in equipped.values():
 		player_stats.remove_source(it.id)
-	equipped.clear()
-	inventory.clear()
+	character.clear()
 	wave = 1
 	restart_wave()
 
@@ -296,6 +350,7 @@ func player() -> SimEntity:
 ## The player keeps the same health fraction under the new max.
 func set_weapon(n: String) -> void:
 	weapon = WeaponProfile.by_name(n)
+	character.weapon_name = weapon.name
 	player_stats.remove_source("weapon")
 	player_stats.add_all("weapon", weapon.mods)
 	_cancel_attack()
@@ -351,6 +406,7 @@ func _step_inner(dt: float, cmd: Command) -> void:
 	if p.alive:
 		_step_player(dt, p, cmd)
 		_pick_up(p, cmd)
+		_check_zones(p)
 	for e in entities.values():
 		if e.kind == &"grunt" and e.alive:
 			_step_grunt(dt, e, p)
@@ -407,6 +463,28 @@ func _step_player(dt: float, p: SimEntity, cmd: Command) -> void:
 
 	if not dashing:
 		_step_attack(dt, p, cmd)
+
+## Exit and descend pads: standing in the rect with no living grunt within exit_lock_radius
+## emits the event once; stepping out re-arms it. The sim never changes level itself: the
+## game (GameState) does, on the event.
+func _check_zones(p: SimEntity) -> void:
+	var in_exit := level.exit.has_area() and level.exit.has_point(p.pos)
+	var in_descend := level.descend.has_area() and level.descend.has_point(p.pos)
+	if not in_exit and not in_descend:
+		_zone_latched = false
+		return
+	if _zone_latched or not zone_clear(p.pos):
+		return
+	_zone_latched = true
+	_emit({"type": "exit" if in_exit else "descend", "level": level.name})
+
+## True when no living grunt is within exit_lock_radius of the point.
+func zone_clear(point: Vector2) -> bool:
+	var r := tuning.exit_lock_radius
+	for e in entities.values():
+		if e.kind == &"grunt" and e.alive and e.pos.distance_to(point) <= r:
+			return false
+	return true
 
 ## The enemy to aim at for a cursor at `point`: alive, its center within target_snap_radius of
 ## the point, the one whose hit circle is nearest the point when several qualify (a fat elite
@@ -782,8 +860,7 @@ func drop_item(pos: Vector2, rarity: StringName = &"common", slot: StringName = 
 ## Put an existing item on the floor (an id is assigned if it has none) and emit drop.
 func place_item(it: SimItem, pos: Vector2) -> SimItem:
 	if it.id <= 0:
-		it.id = _next_id
-		_next_id += 1
+		it.id = character.new_item_id()
 	it.pos = pos
 	items[it.id] = it
 	_emit({"type": "drop", "id": it.id, "slot": it.slot, "rarity": it.rarity, "pos": it.pos})
@@ -917,6 +994,8 @@ func to_dict() -> Dictionary:
 		"wave": wave, "grunts_alive": grunts_alive(), "next_wave_in": snappedf(next_wave_t, 0.01),
 		"wave_packs": wave_packs.map(func(c: Vector2): return [snappedf(c.x, 0.01), snappedf(c.y, 0.01)]),
 		"wave_fallbacks": wave_fallbacks,
+		"level_name": level.name, "level_kind": level.kind,
+		"exit_open": (level.exit.has_area() or level.descend.has_area()) and player() != null and zone_clear(player().pos),
 		"weapon": weapon.name,
 		"attack": {"phase": String(attack_phase), "t": snappedf(attack_t, 0.001),
 			"windup": snappedf(attack_windup(), 0.001), "recovery": snappedf(attack_recovery(), 0.001)},

@@ -21,6 +21,7 @@ const SPECS := [
 	["knockback", 0.0, 3.0, 0.05],
 	["attack_move_mult", 0.1, 1.0, 0.05],
 	["target_snap_radius", 0.0, 4.0, 0.1],
+	["exit_lock_radius", 0.0, 40.0, 1.0],
 	["grunt_hp", 5.0, 300.0, 5.0],
 	["grunt_speed", 0.5, 12.0, 0.1],
 	["grunt_damage", 0.0, 100.0, 1.0],
@@ -79,6 +80,7 @@ var muzzle_offset := 0.6
 var knockback := 0.8          # displacement applied to whoever takes a hit, along the hit direction
 var attack_move_mult := 1.0   # move speed during an attack's windup and recovery, every profile
 var target_snap_radius := 1.5 # cursor targeting: a grunt within this distance of the cursor is aimed at (0 = off)
+var exit_lock_radius := 12.0  # a level exit (or the hub's descend pad) stays shut while a living grunt is within this distance
 
 # Grunt: walks at the player, telegraphs, hits at contact, recovers.
 var grunt_hp := 30.0

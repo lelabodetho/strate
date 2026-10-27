@@ -1,11 +1,16 @@
 extends Node
-## Autoload "GameState". Holds the SimWorld, drives the sim tick, and serves the test harness.
+## Autoload "GameState". Holds the SimWorld (one level), the SimCharacter that survives the
+## levels, drives the sim tick, changes level on the sim's exit / descend events and on the
+## player's death in a strate (back to the hub, character untouched: softcore), and serves the
+## test harness. Levels come from data/levels/<name>.json; the world of a level is seeded from
+## (run_seed, level name), so the same run replays the same strate.
 ##
 ## CLI flags (after `--`):
 ##   --screenshot=<path>   capture the viewport after N frames, then quit
 ##   --state=<path>        dump GameState.to_dict() as JSON, then quit
 ##   --frames=<n>          how many frames to run before capture (default 30)
-##   --seed=<n>            world seed (default 1)
+##   --seed=<n>            run seed (default 1); each level's world seed derives from it and the level name
+##   --level=<name>        start on data/levels/<name>.json (default arena: the wave arena)
 ##   --debug               view draws body radius and hit radius on the ground
 ##   --panel               open the tuning panel at start
 ##   --panel-inv           open the inventory panel at start
@@ -33,8 +38,14 @@ extends Node
 
 const TUNING_PATH := "res://tools/presets/default.json"   # the game's reference values
 const PRESET_DIR := "res://tools/presets"
+const DEFAULT_LEVEL := "arena"
+const HUB_LEVEL := "hub"
+const FIRST_STRATE := "strate_01"
 
 var world: SimWorld
+var character := SimCharacter.new()
+var run_seed: int = 1
+var level_name: String = DEFAULT_LEVEL
 var debug: bool = false
 var paused: bool = false   # set by the scene while the tuning panel is open; the sim does not step
 var preset_name: String = ""   # last preset applied or saved; "" = none
@@ -63,13 +74,15 @@ var _next_frame: int = -1
 var _reset_frame: int = -1
 
 signal wave_cleared(wave: int)
+## A new SimWorld replaced the old one (load_level): the scene rebuilds its level and entity views.
+signal level_changed
 ## Capture mode: emitted right after the main screenshot, before the state dump and quit, so a
 ## scene can save extra images next to it (render_test dumps its two viewports).
 signal capturing(base_path: String)
 
 func _ready() -> void:
 	_args = _parse_args()
-	var seed := int(_args.get("seed", "1"))
+	run_seed = int(_args.get("seed", "1"))
 	debug = _args.has("debug")
 	look_name = String(_args.get("look", Look.DEFAULT_NAME))
 	look.load_file(Look.path(look_name))
@@ -78,7 +91,7 @@ func _ready() -> void:
 	if _args.has("dither"):
 		look.apply({"dither": float(_args["dither"])})
 	# Reference gameplay values live in tools/presets/default.json; code defaults otherwise.
-	world = SimWorld.new(seed, null, SimTuning.load_file(TUNING_PATH))
+	_build_world(String(_args.get("level", DEFAULT_LEVEL)), SimTuning.load_file(TUNING_PATH))
 	if _args.has("preset"):
 		apply_preset(String(_args["preset"]))
 	if _args.has("weapon"):
@@ -128,13 +141,25 @@ func step(dt: float, cmd: Command) -> void:
 			world.equip(world.inventory[_equip_index].id)
 	if not paused:
 		world.step(dt, cmd)
+		var next_level := ""
 		for ev in world.events:
-			if ev.type == "wave_cleared":
-				wave_cleared.emit(ev.wave)
+			match ev.type:
+				"wave_cleared":
+					wave_cleared.emit(ev.wave)
+				"descend":
+					next_level = FIRST_STRATE
+				"exit":
+					next_level = HUB_LEVEL
+				"kill":
+					# Softcore: dying in a strate sends the character home with everything on it.
+					if ev.target == world.player_id and world.level.kind == "strate":
+						next_level = HUB_LEVEL
 		if _scripted and not world.events.is_empty():
 			_recent_events.append({"tick": world.tick, "events": world.to_dict()["events"]})
 			while _recent_events.size() > 0 and _recent_events[0].tick < world.tick - RECENT_TICKS:
 				_recent_events.pop_front()
+		if not next_level.is_empty():
+			load_level(next_level)
 	if _frames_left > 0:
 		_frames_left -= 1
 		if _frames_left == 0:
@@ -144,15 +169,45 @@ func step(dt: float, cmd: Command) -> void:
 
 func to_dict() -> Dictionary:
 	var d := world.to_dict()
+	d["level"] = level_name
+	d["character"] = character.to_dict()
+	d["run_seed"] = run_seed
 	d["paused"] = paused
 	d["preset"] = preset_label()
 	d["hovered_item"] = hovered_item
 	if _scripted:
 		d["recent_events"] = _recent_events
 		d["restarts"] = restarts
+		d["level_loads"] = level_loads
 	return d
 
 var restarts: int = 0
+var level_loads: int = 0   # capture mode: how many times load_level ran after startup
+
+## Build the world of a level around the same character and tuning, without starting it.
+## The arena is the fallback when the file is missing or invalid (the error is already logged).
+func _build_world(name: String, tuning: SimTuning) -> void:
+	var lvl := SimLevel.load_file(SimLevel.path(name))
+	if lvl == null:
+		name = DEFAULT_LEVEL
+		lvl = SimLevel.arena()
+	level_name = name
+	world = SimWorld.new(level_seed(name), lvl, tuning, character)
+
+## Seed of a level's world: the run seed and the level name, so a run replays its strates.
+func level_seed(name: String) -> int:
+	return ("%d:%s" % [run_seed, name]).hash()
+
+## Change level: a fresh SimWorld on the same character and tuning. Floor items stay behind,
+## equipment and bag come along. The scene rebuilds its views on level_changed.
+func load_level(name: String) -> bool:
+	var tuning: SimTuning = world.tuning if world != null else SimTuning.load_file(TUNING_PATH)
+	_build_world(name, tuning)
+	world.begin()
+	level_loads += 1
+	hovered_item = 0
+	level_changed.emit()
+	return level_name == name
 
 ## R: same wave again, player at full health at the spawn. No scene reload, tuning untouched.
 func restart() -> void:

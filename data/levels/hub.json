@@ -1,0 +1,9 @@
+{
+  "name": "hub",
+  "kind": "hub",
+  "floors": [[-6, -6, 12, 12]],
+  "player_spawn": [0, 4],
+  "packs": [],
+  "exit": null,
+  "descend": [-1.5, -5.5, 3, 3]
+}

@@ -45,6 +45,17 @@ func _ready() -> void:
 	_impact_mesh.bottom_radius = IMPACT_RADIUS
 	_impact_mesh.height = 0.02
 
+## Forget every view (the world was replaced: ids restart, nothing carries over).
+func reset() -> void:
+	for dict in [_views, _proj_views, _item_views]:
+		for v in dict.values():
+			v.queue_free()
+		dict.clear()
+	for tr in _transients:
+		tr.node.queue_free()
+	_transients.clear()
+	_last_event_tick = -1
+
 func sync(world: SimWorld) -> void:
 	for e in world.entities.values():
 		var v: EntityView = _views.get(e.id)

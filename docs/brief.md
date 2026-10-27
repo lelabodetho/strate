@@ -6,7 +6,9 @@
 
 **Session du 19/10 (soir), verdicts en jeu** : **brique loot validée** (sac tel quel, ramassage à la souris : survol = étiquette, clic = ramasser, portée 1,5). Reste à valider : les élites.
 
-**Session du 19/10 (nuit)** : brique **contrôles ARPG** codée (fenêtres d'attaque, visée aimantée, caméra dans le look), à valider en jeu — voir « Jalon 4 — Contrôles ARPG ».
+**Session du 19/10 (nuit)** : brique **contrôles ARPG** codée (fenêtres d'attaque, visée aimantée, caméra dans le look), à valider en jeu — voir « Jalon 4 — Contrôles ARPG ». Retour de jeu intermédiaire : `attack_move_mult` remis à 0,55 et sauvé dans `default.json` (0,25 trop lourd).
+
+**Session du 27/10** : brique **4a, le personnage survit au niveau** : `SimCharacter`, niveaux en JSON, hub et sortie. 320 tests headless. Pas encore de contenu de zone (prochaine brique).
 
 **Ensuite** : reste du jalon 4 (paliers de difficulté, boss, éditeur de zone).
 
@@ -349,6 +351,19 @@ Le feel d'un coup d'ARPG tient à l'engagement : on appuie, le corps s'arme, le 
 - La brute à 0,22 de windup + 0,45 : la fente arrive-t-elle encore sur un grunt qui s'approche ? Le technomancer ralenti à 0,25× pendant 0,85 s est-il jouable ou faut-il lui rendre son déplacement libre (c'était son identité) ?
 - L'aimant à 1,5 : trop collant dans un pack serré (on ne choisit plus sa cible) ou juste ? L'anneau fin se lit-il sous le rendu `mix` ?
 - Caméra 50° / 24 : lisibilité des hauteurs (murs fantômes, grunts derrière un pilier) contre l'échelle du perso. Ajuster au slider, sauver le look.
+
+### Jalon 4 — 4a : le personnage survit au niveau, les niveaux viennent du JSON (bouclée le 27/10/2026)
+
+Pilier 3 (le monde persiste) et la structure hub → strates du concept demandent que le personnage ne soit plus une propriété du monde. Cette brique pose la séparation et le premier aller-retour hub ↔ strate, sans contenu.
+
+- [x] **`SimCharacter`** (`src/sim/character.gd`) : profil d'arme, équipement par slot, sac, compteur d'ids d'items. Les ids d'items partent de 1 000 000 (`ITEM_ID_BASE`) : jamais en collision avec les ids d'entités, qui repartent à 1 à chaque niveau, et stables d'un niveau à l'autre. `SimWorld` reçoit un personnage (`SimWorld.new(seed, level, tuning, character)`), applique ses mods à `player_stats` à la construction et lit / écrit l'équipement à travers lui ; `world.equipped` / `world.inventory` restent lisibles mais ne sont plus que des vues. `to_dict()` / `from_dict()` font l'aller-retour complet (arme, items, ids, affixes avec leur pct du moment) : c'est le futur format de sauvegarde. `0` (reset_run) vide le personnage ; la mort ne le touche pas.
+- [x] **Niveaux en JSON** (`data/levels/`) : `SimLevel.from_dict()` lit floors, walls (optionnels : `auto_walls()` entoure les floors et ouvre les jonctions bord à bord), player_spawn, packs `{pos, size, elite, affixes}`, exit, descend, name, kind. Validation stricte (kind connu, au moins un floor, spawn / centres de pack / exit sur un floor) → `null` et une erreur sinon. `arena.json` est `SimLevel.arena()` exporté, chargé par le même code (égalité testée). `hub.json` : une salle 12×12 avec un pad `descend` au nord. `strate_01.json` : salle, couloir, salle, un pack de 3, une sortie au fond (placeholder).
+- [x] **Peuplement par kind** : `kind == "arena"` → vagues comme avant (harnais et tests inchangés) ; sinon les packs du fichier, à leur centre (`PACK_RADIUS`), index de pack = index dans le fichier, élite en tête avec les affixes donnés ou un affixe tiré si la liste est vide ; `wave` reste 0, aucune vague ne suit le nettoyage. Le choix s'est fait sur le kind plutôt que sur « le niveau a des packs » parce que le hub n'a ni packs ni vagues.
+- [x] **Sortie** : joueur dans le rect `exit` (ou `descend`) et aucun grunt vivant à moins de `exit_lock_radius` (tuning, 12) → événement `exit` / `descend` avec le nom du niveau, une seule fois par séjour dans le rect. `exit_open` dans l'état. La sim ne change jamais de niveau.
+- [x] **Transitions dans GameState** : `load_level(nom)` construit un nouveau `SimWorld` sur le même personnage et le même tuning, seed = hash(`run_seed`, nom) (un run rejoue la même strate), émet `level_changed` ; les scènes rebâtissent niveau, occluder et vues (`WorldView.reset()`). `descend` → `strate_01`, `exit` → `hub`, mort en strate → `hub` avec le personnage intact (softcore ; dans l'arène, R reste). Les items au sol restent dans le niveau quitté. Harnais : `--level=<nom>` (défaut arena), l'état dumpé porte `level`, `character`, `level_loads`. Captures : `hub`, `strate_stub`, et `descend` (150 frames en marchant vers le nord : le joueur passe du hub à strate_01 dans la même capture).
+- [x] 32 checks de plus (320) : round-trip du personnage, mêmes stats sur un nouveau monde, ids d'items ≠ ids d'entités sur 60 + 60 puis un second niveau, mort sans effet sur le personnage, chargeur (pack / exit / spawn hors sol, kind inconnu, fichier absent), murs automatiques du couloir (ouvert aux deux bouches, fermé sur les côtés), packs posés et seedés, pas de vague après nettoyage, sortie verrouillée puis ouverte selon le rayon, réarmée en ressortant, descend du hub.
+
+À faire au prochain prompt : le contenu de zone (packs, élites, loot et rythme d'une vraie strate), et en jeu vérifier que le passage hub → strate → hub se lit (pour l'instant aucun marquage visuel des pads : le view ne dessine ni `exit` ni `descend`).
 
 ### Jalon 4 — Contenu
 

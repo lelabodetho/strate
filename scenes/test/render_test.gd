@@ -50,6 +50,16 @@ func _ready() -> void:
 	_sync_cameras()
 	_apply_look()
 	GameState.capturing.connect(_dump_viewports)
+	GameState.level_changed.connect(_on_level_changed)
+
+## A new world (hub <-> strate, death): rebuild both geometries, drop every entity view.
+func _on_level_changed() -> void:
+	var w: SimWorld = GameState.world
+	level_view.build(w.level)
+	occluder.build(w.level, true)
+	world_view.reset()
+	world_view.sync(w)
+	cam.position = _cam_target()
 
 ## Capture mode: the raw low-res world and entity viewports, before the filter.
 func _dump_viewports(base: String) -> void:

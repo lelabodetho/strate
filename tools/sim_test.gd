@@ -51,6 +51,8 @@ func _init() -> void:
 	test_shield_window()
 	test_attack_window()
 	test_targeting()
+	test_character()
+	test_levels()
 	print("[sim_test] ", "OK" if failures == 0 else "FAILED (%d)" % failures)
 	quit(1 if failures > 0 else 0)
 
@@ -1481,3 +1483,163 @@ func _shoot_at(aim: Vector2, snap: bool) -> int:
 			if ev.type == "hit" and ev.target == g.id:
 				hits += 1
 	return hits
+
+## The character survives the level: equipment and bag live on SimCharacter, a new SimWorld on
+## the same character starts with the same stats; to_dict / from_dict round-trips.
+func test_character() -> void:
+	var c := SimCharacter.new()
+	var w := SimWorld.new(1, null, null, c)
+	w.spawn(&"player", Vector2(0, 9))
+	w.set_weapon("brute")
+	var weapon_it := SimItem.make(&"weapon", &"rare", [{"stat": "proj_damage", "tier": 3}, {"stat": "fire_rate", "tier": 1}], w.tuning)
+	var armor_it := SimItem.make(&"armor", &"common", [{"stat": "player_hp", "tier": 2}], w.tuning)
+	var bag_it := SimItem.make(&"module", &"epic", [{"stat": "dash_cooldown", "tier": 2}], w.tuning)
+	_give(w, weapon_it)
+	_give(w, armor_it)
+	w.place_item(bag_it, w.player().pos)
+	w.step(DT, cmd(Vector2.ZERO, Vector2(0, -20), false, false, true))
+	check(w.character == c and c.equipped.size() == 2 and c.inventory.size() == 1 and c.weapon_name == "brute",
+		"the world writes equipment, bag and weapon on its character")
+	check(w.equipped.get(&"weapon") == weapon_it and w.inventory[0] == bag_it, "world.equipped / inventory are views on the character")
+	var dmg := w.player_stats.value("proj_damage")
+	var hp := w.player_stats.value("player_hp")
+	var window := w.fire_interval()
+	# Same character, next level: same numbers before any pickup.
+	var w2 := SimWorld.new(99, SimLevel.load_file(SimLevel.path("strate_01")), w.tuning, c)
+	w2.begin()
+	check(w2.weapon.name == "brute" and is_equal_approx(w2.player_stats.value("proj_damage"), dmg)
+		and is_equal_approx(w2.player_stats.value("player_hp"), hp) and is_equal_approx(w2.fire_interval(), window)
+		and is_equal_approx(w2.player().hp_max, hp),
+		"a new world on the same character has the same stats (%.1f dmg, %.0f hp, %.3f s)" % [dmg, hp, window])
+	check(w2.equipped.get(&"weapon") == weapon_it and w2.inventory.size() == 1 and w2.items.is_empty(),
+		"equipment and bag came along, floor items stayed behind")
+	# Round-trip through the save shape.
+	var d := c.to_dict()
+	var c2 := SimCharacter.from_dict(JSON.parse_string(JSON.stringify(d)))
+	var w3 := SimWorld.new(1, null, w.tuning, c2)
+	w3.spawn(&"player", Vector2(0, 9))
+	check(c2.weapon_name == "brute" and c2.equipped.size() == 2 and c2.inventory.size() == 1
+		and c2.equipped[&"weapon"].id == weapon_it.id and c2.inventory[0].id == bag_it.id
+		and JSON.stringify(c2.to_dict()) == JSON.stringify(d),
+		"from_dict(to_dict()) keeps weapon, items, ids and affixes")
+	check(is_equal_approx(w3.player_stats.value("proj_damage"), dmg) and is_equal_approx(w3.player_stats.value("player_hp"), hp)
+		and is_equal_approx(w3.fire_interval(), window), "a world built on the loaded character has the same stats")
+	check(c2.next_item_id > bag_it.id and c2.new_item_id() > bag_it.id, "the loaded character never reuses an item id")
+	# Weapon switch is persisted; 0 (reset_run) clears the character.
+	w3.set_weapon("technomancer")
+	check(c2.weapon_name == "technomancer", "set_weapon writes the profile name on the character")
+	w3.reset_run()
+	check(c2.equipped.is_empty() and c2.inventory.is_empty() and not w3.player_stats.has_source(weapon_it.id), "reset_run empties the character")
+	# Item ids never collide with entity ids, within a level or across levels.
+	var c4 := SimCharacter.new()
+	var w4 := SimWorld.new(5, null, null, c4)
+	w4.spawn(&"player", Vector2(0, 9))
+	var ids := {}
+	for i in 60:
+		var g := w4.spawn(&"grunt", Vector2(0, -20))
+		ids[g.id] = true
+		var it := w4.drop_item(Vector2(0, -20))
+		check(not ids.has(it.id), "item id %d is not an entity id" % it.id) if ids.has(it.id) else null
+		ids[it.id] = true
+	var w5 := SimWorld.new(6, null, null, c4)
+	w5.spawn(&"player", Vector2(0, 9))
+	var it5 := w5.drop_item(Vector2(0, 0))
+	check(it5.id >= SimCharacter.ITEM_ID_BASE and it5.id > w4.items.keys().max() and ids.size() == 120,
+		"item ids come from the character, above ITEM_ID_BASE, unique across levels (%d)" % it5.id)
+	# Death leaves the character alone.
+	var c6 := SimCharacter.new()
+	var w6 := SimWorld.new(1, null, null, c6)
+	w6.spawn(&"player", Vector2(0, 9))
+	_give(w6, SimItem.make(&"weapon", &"common", [{"stat": "fire_rate", "tier": 1}], w6.tuning))
+	var before := JSON.stringify(c6.to_dict())
+	w6.damage(w6.player().id, 10000.0)
+	check(not w6.player().alive and JSON.stringify(c6.to_dict()) == before, "the player's death does not touch the character")
+	var w7 := SimWorld.new(2, SimLevel.load_file(SimLevel.path("hub")), w6.tuning, c6)
+	w7.begin()
+	check(w7.player().alive and w7.equipped.size() == 1 and is_equal_approx(w7.fire_interval(), 0.42 / 1.08), "back in the hub with the same equipment")
+
+## Levels from JSON: the loader validates, arena.json equals SimLevel.arena(), packs spawn in
+## place, exit and descend fire only when no grunt is near.
+func test_levels() -> void:
+	var arena := SimLevel.load_file(SimLevel.path("arena"))
+	check(arena != null and JSON.stringify(arena.to_dict()) == JSON.stringify(SimLevel.arena().to_dict()), "data/levels/arena.json is SimLevel.arena()")
+	var base := {"name": "t", "kind": "strate", "floors": [[-5, -5, 10, 10]], "player_spawn": [0, 3],
+		"packs": [{"pos": [0, -3], "size": 2}], "exit": [-1, -5, 2, 2]}
+	check(SimLevel.from_dict(base) != null, "a valid level loads")
+	var off := base.duplicate(true)
+	off.packs[0].pos = [0, -9]
+	check(SimLevel.from_dict(off) == null, "a pack off the floor is rejected")
+	var off_exit := base.duplicate(true)
+	off_exit.exit = [20, 20, 2, 2]
+	check(SimLevel.from_dict(off_exit) == null, "an exit off the floor is rejected")
+	var off_spawn := base.duplicate(true)
+	off_spawn.player_spawn = [9, 9]
+	check(SimLevel.from_dict(off_spawn) == null, "a spawn off the floor is rejected")
+	var bad_kind := base.duplicate(true)
+	bad_kind.kind = "dungeon"
+	check(SimLevel.from_dict(bad_kind) == null and SimLevel.from_dict({"name": "x", "kind": "hub", "player_spawn": [0, 0]}) == null,
+		"unknown kind or no floor is rejected")
+	check(SimLevel.load_file(SimLevel.path("nope")) == null, "a missing file is rejected")
+	# Auto walls: a single room gets four, two touching rooms open where they meet.
+	var hub := SimLevel.load_file(SimLevel.path("hub"))
+	check(hub != null and hub.kind == "hub" and hub.walls.size() == 4 and hub.descend.has_area() and not hub.exit.has_area() and hub.packs.is_empty(),
+		"hub: one room, four walls, a descend pad, no packs")
+	var s1 := SimLevel.load_file(SimLevel.path("strate_01"))
+	check(s1 != null and s1.kind == "strate" and s1.packs.size() == 1 and s1.exit.has_area()
+		and not s1.is_blocked(Vector2(0, -6.5)) and not s1.is_blocked(Vector2(0, -14.5))
+		and s1.is_blocked(Vector2(-2.5, -10)) and s1.is_blocked(Vector2(0, 6.5)),
+		"strate_01: the corridor is open at both mouths, walled on its sides")
+	var rt := SimLevel.from_dict(JSON.parse_string(JSON.stringify(s1.to_dict())))
+	check(rt != null and JSON.stringify(rt.to_dict()) == JSON.stringify(s1.to_dict()), "from_dict(to_dict()) round-trips a level")
+	# Packs spawn where the file says, with pack indices; an elite leader with the given affixes.
+	var w := SimWorld.new(3, s1)
+	w.begin()
+	var grunts := w.entities.values().filter(func(e): return e.kind == &"grunt")
+	var near_center := grunts.all(func(g): return g.pos.distance_to(Vector2(0, -23)) <= SimWorld.PACK_RADIUS + 0.01 and g.pack == 0)
+	check(grunts.size() == 3 and near_center and w.wave == 0 and w.wave_packs.size() == 1 and w.wave_packs[0] == Vector2(0, -23), "strate_01: one pack of 3 within PACK_RADIUS of (0, -23), wave 0")
+	var elite_lvl := base.duplicate(true)
+	elite_lvl.packs = [{"pos": [0, -3], "size": 3, "elite": true, "affixes": ["shielded", "fast"]}, {"pos": [3, 3], "size": 2, "elite": true}]
+	var w2 := SimWorld.new(3, SimLevel.from_dict(elite_lvl))
+	w2.begin()
+	var elites := w2.elites()
+	check(elites.size() == 2 and elites.any(func(e): return e.affixes.size() == 2 and e.affixes[0] == &"shielded" and e.affixes[1] == &"fast" and e.pack == 0)
+		and elites.any(func(e): return e.pack == 1 and e.affixes.size() == 1 and SimWorld.AFFIXES.has(e.affixes[0])),
+		"elite packs: given affixes kept, empty list rolls one")
+	var same := SimWorld.new(3, SimLevel.from_dict(elite_lvl))
+	same.begin()
+	check(JSON.stringify(same.to_dict().entities) == JSON.stringify(w2.to_dict().entities), "level spawns are seeded")
+	# Clearing a hand-placed level emits no wave_cleared and starts no wave.
+	for g in grunts:
+		w.damage(g.id, g.hp_max, Vector2.ZERO, 0.0)
+	var cleared := w.events.filter(func(ev): return ev.type == "wave_cleared")
+	run(w, 1.0, cmd())
+	check(cleared.is_empty() and w.next_wave_t == 0.0 and w.grunts_alive() == 0, "a cleared strate stays cleared: no wave follows")
+	# Exit: locked while a grunt lives within exit_lock_radius, one event per stay.
+	var w3 := SimWorld.new(3, s1)
+	w3.begin()
+	var p3 := w3.player()
+	var exit_center := s1.exit.get_center()
+	var pack3 := w3.entities.values().filter(func(e): return e.kind == &"grunt")
+	for g in pack3:   # hold the pack where it spawned, 3 to 7 from the exit
+		g.state = &"recover"
+		g.state_t = 1000.0
+	p3.pos = exit_center
+	var ev_in := _events_of(w3, "exit", 0.5, cmd())
+	var dist: float = pack3.map(func(g): return g.pos.distance_to(exit_center)).min()
+	check(ev_in.is_empty() and dist < w3.tuning.exit_lock_radius and not w3.to_dict().exit_open, "exit stays shut with a grunt %.1f away (lock %.0f)" % [dist, w3.tuning.exit_lock_radius])
+	w3.tuning.exit_lock_radius = dist - 0.1
+	ev_in = _events_of(w3, "exit", 0.5, cmd())
+	check(ev_in.size() == 1 and ev_in[0].level == "strate_01" and w3.to_dict().exit_open, "lock radius under the pack distance: exit fires once (%d)" % ev_in.size())
+	p3.pos = Vector2(0, -20)
+	run(w3, 0.1, cmd())
+	p3.pos = exit_center
+	check(_events_of(w3, "exit", 0.2, cmd()).size() == 1, "stepping out and back in fires again")
+	# Hub: the descend pad, same lock, no grunts so it opens at once; nothing on the floor outside it.
+	var w4 := SimWorld.new(1, hub)
+	w4.begin()
+	run(w4, 0.2, cmd())
+	check(w4.events.filter(func(ev): return ev.type == "descend").is_empty() and w4.grunts_alive() == 0, "hub: no grunts, no event off the pad")
+	w4.player().pos = hub.descend.get_center()
+	var desc := _events_of(w4, "descend", 0.3, cmd())
+	check(desc.size() == 1 and desc[0].level == "hub", "standing on the descend pad emits descend once")
+	check(SimTuning.keys().has("exit_lock_radius") and SimTuning.new().exit_lock_radius == 12.0, "exit_lock_radius is a tuning key, default 12")
