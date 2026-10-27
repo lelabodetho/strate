@@ -12,6 +12,7 @@
 shader = ExtResource("7")
 shader_parameter/mode = 2
 shader_parameter/dither_strength = 0.5
+shader_parameter/dither_low = 0.06
 shader_parameter/scanlines = 0.5
 shader_parameter/key_transparent = false
 shader_parameter/key_color = Color(1, 0, 1, 1)
@@ -27,6 +28,7 @@ ambient_light_energy = 0.45
 shader = ExtResource("7")
 shader_parameter/mode = 0
 shader_parameter/dither_strength = 0.5
+shader_parameter/dither_low = 0.06
 shader_parameter/scanlines = 0.5
 shader_parameter/key_transparent = true
 shader_parameter/key_color = Color(1, 0, 1, 1)
